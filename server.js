@@ -10,7 +10,7 @@ const app = express();
 
 // ========== CORS configuration ==========
 const allowedOrigins = [
-    "https://whatsapp-chat-private-production-276f.up.railway.app",
+    "https://live-whats-chatting-production.up.railway.app",
     "http://localhost:3000"
 ];
 
@@ -806,6 +806,6 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(`✅ HJH Chat app running on https://whatsapp-chat-private-production-276f.up.railway.app`);
+    console.log(`✅ HJH Chat app running on https://live-whats-chatting-production.up.railway.app`);
     console.log(`✅ Admin API enabled with key: hjchat-admin-secret-key-2024`);
 });
