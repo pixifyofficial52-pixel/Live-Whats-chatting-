@@ -11,20 +11,11 @@ const app = express();
 // ========== CORS configuration ==========
 const allowedOrigins = [
     "https://live-whats-chatting-production.up.railway.app",
-    "http://localhost:3000",
-    "https://whatsapp-chat-admin-panel.vercel.app",
-    "https://hjchat-admin-panel.vercel.app"
+    "http://localhost:3000"
 ];
 
 app.use(cors({
-    origin: function (origin, callback) {
-        if (!origin) return callback(null, true);
-        if (allowedOrigins.indexOf(origin) === -1) {
-            const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
-            return callback(new Error(msg), false);
-        }
-        return callback(null, true);
-    },
+    origin: allowedOrigins,
     methods: ["GET", "POST", "DELETE", "OPTIONS"],
     credentials: true,
     allowedHeaders: ["Content-Type", "Authorization", "x-api-key"]
@@ -73,13 +64,16 @@ const io = socketIo(server, {
 });
 
 // ========== Data Stores ==========
-const users = new Map(); // userId -> {socketId, name, profilePic, deviceId}
+const users = new Map(); // userId -> {socketId, name, profilePic, deviceId, isAdmin}
 const userNames = new Map(); // name -> userId (for uniqueness)
 const userDevices = new Map(); // deviceId -> userId (for device tracking)
 const offlineMessages = new Map(); // userId -> [messages] (store offline messages)
 const blockedUsers = new Set(); // Store blocked user IDs
 const callLogs = []; // Store call history for admin
-const messageStore = []; // Store messages for admin (optional)
+const messageStore = []; // Store messages for admin
+
+// ========== Admin Users List (Special Users with Crown) ==========
+const adminUsers = new Set(); // Store user IDs who are admins (have crown)
 
 // ========== ADMIN API CONFIGURATION ==========
 const ADMIN_API_KEY = 'hjchat-admin-secret-key-2024';
@@ -87,14 +81,9 @@ const ADMIN_API_KEY = 'hjchat-admin-secret-key-2024';
 // Admin API middleware
 function verifyAdminKey(req, res, next) {
     const apiKey = req.headers['x-api-key'];
-    console.log('🔑 Admin API Key received:', apiKey);
-    console.log('🔑 Expected API Key:', ADMIN_API_KEY);
-    
     if (apiKey === ADMIN_API_KEY) {
-        console.log('✅ API Key verified');
         next();
     } else {
-        console.log('❌ API Key invalid');
         res.status(401).json({ error: 'Unauthorized - Invalid API Key' });
     }
 }
@@ -103,11 +92,9 @@ function verifyAdminKey(req, res, next) {
 
 // Get dashboard stats
 app.get('/api/admin/stats', verifyAdminKey, (req, res) => {
-    console.log('📊 Stats endpoint called');
     const onlineCount = Array.from(users.values()).filter(u => u.socketId).length;
     const filesCount = fs.existsSync('uploads') ? fs.readdirSync('uploads').length : 0;
     
-    // Count today's calls
     const today = new Date().toDateString();
     const callsToday = callLogs.filter(call => 
         new Date(call.timestamp).toDateString() === today
@@ -119,13 +106,13 @@ app.get('/api/admin/stats', verifyAdminKey, (req, res) => {
         totalMessages: messageStore.length,
         callsToday: callsToday,
         totalFiles: filesCount,
-        blockedUsers: blockedUsers.size
+        blockedUsers: blockedUsers.size,
+        adminUsers: adminUsers.size
     });
 });
 
-// Get all users
+// Get all users (with admin status)
 app.get('/api/admin/users', verifyAdminKey, (req, res) => {
-    console.log('👥 Users endpoint called');
     const userList = [];
     users.forEach((value, key) => {
         userList.push({
@@ -135,11 +122,77 @@ app.get('/api/admin/users', verifyAdminKey, (req, res) => {
             deviceId: value.deviceId || 'N/A',
             profilePic: value.profilePic || null,
             lastSeen: new Date().toISOString(),
-            joined: new Date().toISOString()
+            joined: new Date().toISOString(),
+            isAdmin: value.isAdmin || false, // Admin status with crown
+            hasCrown: adminUsers.has(key) // Special admin with crown
         });
     });
-    console.log(`📋 Returning ${userList.length} users`);
     res.json(userList);
+});
+
+// ========== NEW: Make user admin (give crown) ==========
+app.post('/api/admin/make-admin/:userId', verifyAdminKey, (req, res) => {
+    const { userId } = req.params;
+    
+    if (users.has(userId)) {
+        const user = users.get(userId);
+        user.isAdmin = true;
+        users.set(userId, user);
+        adminUsers.add(userId); // Add to special admin set
+        
+        // Notify all users about admin status change
+        io.emit('user-admin-status', {
+            userId: userId,
+            isAdmin: true,
+            hasCrown: true
+        });
+        
+        console.log(`👑 User ${user.name} is now an admin with crown`);
+        res.json({ success: true, message: 'User is now admin with crown', hasCrown: true });
+    } else {
+        res.status(404).json({ error: 'User not found' });
+    }
+});
+
+// ========== NEW: Remove admin status ==========
+app.post('/api/admin/remove-admin/:userId', verifyAdminKey, (req, res) => {
+    const { userId } = req.params;
+    
+    if (users.has(userId)) {
+        const user = users.get(userId);
+        user.isAdmin = false;
+        users.set(userId, user);
+        adminUsers.delete(userId); // Remove from special admin set
+        
+        // Notify all users about admin status change
+        io.emit('user-admin-status', {
+            userId: userId,
+            isAdmin: false,
+            hasCrown: false
+        });
+        
+        console.log(`User ${user.name} is no longer admin`);
+        res.json({ success: true, message: 'Admin status removed' });
+    } else {
+        res.status(404).json({ error: 'User not found' });
+    }
+});
+
+// ========== NEW: Get all admin users ==========
+app.get('/api/admin/admins', verifyAdminKey, (req, res) => {
+    const adminList = [];
+    adminUsers.forEach(userId => {
+        if (users.has(userId)) {
+            const user = users.get(userId);
+            adminList.push({
+                userId: userId,
+                name: user.name,
+                profilePic: user.profilePic,
+                deviceId: user.deviceId
+            });
+        }
+    });
+    res.json(adminList);
 });
 
 // Block/Unblock user
@@ -151,7 +204,6 @@ app.post('/api/admin/block/:userId', verifyAdminKey, (req, res) => {
         res.json({ success: true, message: 'User unblocked', blocked: false });
     } else {
         blockedUsers.add(userId);
-        // Disconnect user if online
         if (users.has(userId)) {
             const user = users.get(userId);
             if (user.socketId) {
@@ -169,16 +221,14 @@ app.delete('/api/admin/user/:userId', verifyAdminKey, (req, res) => {
     if (users.has(userId)) {
         const user = users.get(userId);
         
-        // Disconnect user if online
         if (user.socketId) {
             io.to(user.socketId).emit('force-disconnect', { reason: 'deleted' });
         }
         
-        // Remove from all maps
         users.delete(userId);
         userNames.delete(user.name);
+        adminUsers.delete(userId); // Remove from admin if was admin
         
-        // Remove from device tracking
         if (user.deviceId) {
             userDevices.delete(user.deviceId);
         }
@@ -193,28 +243,20 @@ app.delete('/api/admin/user/:userId', verifyAdminKey, (req, res) => {
 // Get messages for specific user
 app.get('/api/admin/messages/:userId', verifyAdminKey, (req, res) => {
     const { userId } = req.params;
-    
-    // Filter messages for this user (both sent and received)
     const userMessages = messageStore.filter(msg => 
         msg.fromUserId === userId || msg.toUserId === userId
     ).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-    
     res.json(userMessages);
 });
 
 // Delete specific message
 app.post('/api/admin/message', verifyAdminKey, (req, res) => {
     const { messageId } = req.body;
-    
-    // Broadcast delete to all users
     io.emit('admin-delete-message', { messageId });
-    
-    // Remove from message store if exists
     const index = messageStore.findIndex(m => m.messageId === messageId);
     if (index !== -1) {
         messageStore.splice(index, 1);
     }
-    
     res.json({ success: true, message: 'Message deleted' });
 });
 
@@ -228,7 +270,6 @@ app.get('/api/admin/files', verifyAdminKey, (req, res) => {
     if (!fs.existsSync('uploads')) {
         return res.json([]);
     }
-    
     const files = fs.readdirSync('uploads').map(file => {
         const filePath = path.join('uploads', file);
         const stats = fs.statSync(filePath);
@@ -246,7 +287,6 @@ app.get('/api/admin/files', verifyAdminKey, (req, res) => {
 app.delete('/api/admin/file/:name', verifyAdminKey, (req, res) => {
     const { name } = req.params;
     const filePath = path.join('uploads', name);
-    
     if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
         res.json({ success: true, message: 'File deleted' });
@@ -255,44 +295,9 @@ app.delete('/api/admin/file/:name', verifyAdminKey, (req, res) => {
     }
 });
 
-// Get blocked words list
-app.get('/api/admin/blocked-words', verifyAdminKey, (req, res) => {
-    const blockedWords = [];
-    res.json(blockedWords);
-});
-
-// Add blocked word
-app.post('/api/admin/blocked-words', verifyAdminKey, (req, res) => {
-    const { word } = req.body;
-    res.json({ success: true, message: 'Word added' });
-});
-
-// Delete blocked word
-app.delete('/api/admin/blocked-words/:word', verifyAdminKey, (req, res) => {
-    const { word } = req.params;
-    res.json({ success: true, message: 'Word removed' });
-});
-
-// Get settings
-app.get('/api/admin/settings', verifyAdminKey, (req, res) => {
-    const settings = {
-        siteName: 'HJH Chat',
-        maintenanceMode: false,
-        enableVoice: true,
-        enableVideo: true,
-        maxMessageLength: 5000,
-        maxFileSize: 50,
-        allowedFileTypes: ['jpg', 'png', 'pdf', 'mp3', 'mp4']
-    };
-    res.json(settings);
-});
-
-// Update settings
-app.post('/api/admin/settings', verifyAdminKey, (req, res) => {
-    const settings = req.body;
-    fs.writeFileSync('settings.json', JSON.stringify(settings, null, 2));
-    console.log('Settings updated:', settings);
-    res.json({ success: true, message: 'Settings saved' });
+// ========== ADMIN PANEL ROUTE ==========
+app.get('/admin', (req, res) => {
+    res.sendFile(path.join(__dirname, 'admin.html'));
 });
 
 // ========== Regular Routes ==========
@@ -323,7 +328,9 @@ io.on('connection', (socket) => {
             allUsers.push({
                 userId: key,
                 name: value.name,
-                profilePic: value.profilePic
+                profilePic: value.profilePic,
+                isAdmin: value.isAdmin || false,
+                hasCrown: adminUsers.has(key)
             });
         });
         socket.emit('all-users', allUsers);
@@ -344,7 +351,9 @@ io.on('connection', (socket) => {
                 results.push({
                     userId: key,
                     name: value.name,
-                    profilePic: value.profilePic
+                    profilePic: value.profilePic,
+                    isAdmin: value.isAdmin || false,
+                    hasCrown: adminUsers.has(key)
                 });
             }
         });
@@ -392,6 +401,9 @@ io.on('connection', (socket) => {
             }
         }
         
+        // Check if user was already admin
+        const isAdmin = adminUsers.has(userId);
+        
         if (users.has(userId)) {
             const oldSocketId = users.get(userId).socketId;
             if (oldSocketId !== socket.id) {
@@ -404,7 +416,8 @@ io.on('connection', (socket) => {
             socketId: socket.id,
             name: name,
             profilePic: profilePic || null,
-            deviceId: deviceId
+            deviceId: deviceId,
+            isAdmin: isAdmin
         });
         
         userNames.set(name, userId);
@@ -418,7 +431,9 @@ io.on('connection', (socket) => {
                 onlineUsers.push({
                     userId: key,
                     name: value.name,
-                    profilePic: value.profilePic
+                    profilePic: value.profilePic,
+                    isAdmin: value.isAdmin || false,
+                    hasCrown: adminUsers.has(key)
                 });
             }
         });
@@ -428,7 +443,9 @@ io.on('connection', (socket) => {
         socket.broadcast.emit('user-online', { 
             userId, 
             name, 
-            profilePic: profilePic || null 
+            profilePic: profilePic || null,
+            isAdmin: isAdmin,
+            hasCrown: isAdmin
         });
         
         if (offlineMessages.has(userId)) {
@@ -446,7 +463,7 @@ io.on('connection', (socket) => {
             console.log(`Delivered ${messages.length} offline messages to ${name}`);
         }
         
-        console.log(`✅ User ${name} (${userId}) logged in from device ${deviceId}`);
+        console.log(`✅ User ${name} (${userId}) logged in from device ${deviceId} ${isAdmin ? '👑' : ''}`);
     });
 
     // ========== Profile picture update ==========
@@ -522,7 +539,6 @@ io.on('connection', (socket) => {
     socket.on('voice-message', (data) => {
         const { toUserId, audioUrl, fromUserId, fromName, duration, messageId, timestamp } = data;
         
-        // Store for admin
         messageStore.push({
             messageId,
             fromUserId,
@@ -547,7 +563,6 @@ io.on('connection', (socket) => {
             if (!offlineMessages.has(toUserId)) {
                 offlineMessages.set(toUserId, []);
             }
-            
             offlineMessages.get(toUserId).push({
                 fromUserId,
                 fromName,
@@ -564,7 +579,6 @@ io.on('connection', (socket) => {
     socket.on('file-message', (data) => {
         const { toUserId, fileUrl, fileName, fileType, fromUserId, fromName, messageId, timestamp } = data;
         
-        // Store for admin
         messageStore.push({
             messageId,
             fromUserId,
@@ -591,7 +605,6 @@ io.on('connection', (socket) => {
             if (!offlineMessages.has(toUserId)) {
                 offlineMessages.set(toUserId, []);
             }
-            
             offlineMessages.get(toUserId).push({
                 fromUserId,
                 fromName,
@@ -609,7 +622,6 @@ io.on('connection', (socket) => {
     socket.on('delete-message', (data) => {
         const { messageId, toUserId, deleteType, fromUserId, timestamp } = data;
         
-        // Remove from message store
         const msgIndex = messageStore.findIndex(m => m.messageId === messageId);
         if (msgIndex !== -1) {
             messageStore[msgIndex].deleted = true;
@@ -617,7 +629,6 @@ io.on('connection', (socket) => {
             messageStore[msgIndex].deletedBy = fromUserId;
         }
         
-        // Broadcast to both users if delete for everyone
         if (deleteType === 'for-everyone') {
             if (users.has(toUserId)) {
                 io.to(toUserId).emit('message-deleted', {
@@ -627,26 +638,20 @@ io.on('connection', (socket) => {
                     timestamp
                 });
             }
-            
-            // Also send back to sender for other devices
             io.to(fromUserId).emit('message-deleted', {
                 messageId,
                 deleteType,
                 fromUserId,
                 timestamp
             });
-            
             console.log(`Message ${messageId} deleted for everyone`);
-        } 
-        // For delete for me, just send to sender's other devices
-        else if (deleteType === 'for-me') {
+        } else if (deleteType === 'for-me') {
             io.to(fromUserId).emit('message-deleted', {
                 messageId,
                 deleteType,
                 fromUserId,
                 timestamp
             });
-            
             console.log(`Message ${messageId} deleted for user ${fromUserId}`);
         }
     });
@@ -655,7 +660,6 @@ io.on('connection', (socket) => {
     socket.on('message-read', (data) => {
         const { messageId, fromUserId, toUserId } = data;
         
-        // Update in message store
         const msg = messageStore.find(m => m.messageId === messageId);
         if (msg) {
             msg.read = true;
@@ -672,7 +676,6 @@ io.on('connection', (socket) => {
     socket.on('messages-read', (data) => {
         const { toUserId, fromUserId } = data;
         
-        // Mark all messages from this user as read
         messageStore.forEach(msg => {
             if (msg.fromUserId === fromUserId && msg.toUserId === toUserId) {
                 msg.read = true;
@@ -702,7 +705,6 @@ io.on('connection', (socket) => {
         const { toUserId, offer, callType } = data;
         const fromUser = users.get(socket.id);
         
-        // Log call for admin
         callLogs.push({
             caller: fromUser?.name || 'Unknown',
             callerId: socket.id,
@@ -725,7 +727,6 @@ io.on('connection', (socket) => {
     socket.on('call-answer', (data) => {
         const { toUserId, answer } = data;
         
-        // Update call log
         const lastCall = callLogs[callLogs.length - 1];
         if (lastCall) {
             lastCall.status = 'answered';
@@ -743,7 +744,6 @@ io.on('connection', (socket) => {
     socket.on('call-end', (data) => {
         const { toUserId } = data;
         
-        // Update call log with duration
         const lastCall = callLogs[callLogs.length - 1];
         if (lastCall && lastCall.status === 'answered') {
             const endTime = new Date();
@@ -760,7 +760,6 @@ io.on('connection', (socket) => {
     socket.on('call-busy', (data) => {
         const { toUserId } = data;
         
-        // Update call log
         const lastCall = callLogs[callLogs.length - 1];
         if (lastCall) {
             lastCall.status = 'busy';
@@ -821,4 +820,6 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`✅ HJH Chat app running on https://live-whats-chatting-production.up.railway.app`);
     console.log(`✅ Admin API enabled with key: hjchat-admin-secret-key-2024`);
+    console.log(`✅ Admin panel available at: /admin`);
+    console.log(`✅ Crown 👑 system enabled for special users`);
 });
