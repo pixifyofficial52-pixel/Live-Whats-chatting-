@@ -8,16 +8,28 @@ const fs = require('fs');
 
 const app = express();
 
-// ========== CORS configuration ==========
+// ========== UPDATED CORS configuration ==========
 const allowedOrigins = [
     "https://live-whats-chatting-production.up.railway.app",
-    "http://localhost:3000"
+    "http://localhost:3000",
+    "https://whatsapp-chat-admin-panel.vercel.app",
+    "https://hjchat-admin-panel.vercel.app"
 ];
 
 app.use(cors({
-    origin: allowedOrigins,
-    methods: ["GET", "POST"],
-    credentials: true
+    origin: function (origin, callback) {
+        // Allow requests with no origin (like mobile apps, curl, etc)
+        if (!origin) return callback(null, true);
+        
+        if (allowedOrigins.indexOf(origin) === -1) {
+            const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
+            return callback(new Error(msg), false);
+        }
+        return callback(null, true);
+    },
+    methods: ["GET", "POST", "DELETE", "OPTIONS"],
+    credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization", "x-api-key"]
 }));
 
 // ========== Force HTTPS redirect ==========
@@ -118,7 +130,7 @@ app.get('/api/admin/users', verifyAdminKey, (req, res) => {
             deviceId: value.deviceId || 'N/A',
             profilePic: value.profilePic || null,
             lastSeen: new Date().toISOString(),
-            joined: new Date().toISOString() // You might want to store actual join date
+            joined: new Date().toISOString()
         });
     });
     res.json(userList);
@@ -239,7 +251,6 @@ app.delete('/api/admin/file/:name', verifyAdminKey, (req, res) => {
 
 // Get blocked words list
 app.get('/api/admin/blocked-words', verifyAdminKey, (req, res) => {
-    // You can store blocked words in a file or database
     const blockedWords = [];
     res.json(blockedWords);
 });
@@ -247,20 +258,17 @@ app.get('/api/admin/blocked-words', verifyAdminKey, (req, res) => {
 // Add blocked word
 app.post('/api/admin/blocked-words', verifyAdminKey, (req, res) => {
     const { word } = req.body;
-    // Add to your blocked words storage
     res.json({ success: true, message: 'Word added' });
 });
 
 // Delete blocked word
 app.delete('/api/admin/blocked-words/:word', verifyAdminKey, (req, res) => {
     const { word } = req.params;
-    // Remove from your blocked words storage
     res.json({ success: true, message: 'Word removed' });
 });
 
 // Get settings
 app.get('/api/admin/settings', verifyAdminKey, (req, res) => {
-    // You can store settings in a file or database
     const settings = {
         siteName: 'HJH Chat',
         maintenanceMode: false,
@@ -276,7 +284,6 @@ app.get('/api/admin/settings', verifyAdminKey, (req, res) => {
 // Update settings
 app.post('/api/admin/settings', verifyAdminKey, (req, res) => {
     const settings = req.body;
-    // Save settings to file or database
     fs.writeFileSync('settings.json', JSON.stringify(settings, null, 2));
     console.log('Settings updated:', settings);
     res.json({ success: true, message: 'Settings saved' });
