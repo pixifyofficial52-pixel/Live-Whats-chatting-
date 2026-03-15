@@ -8,7 +8,7 @@ const fs = require('fs');
 
 const app = express();
 
-// ========== UPDATED CORS configuration ==========
+// ========== CORS configuration ==========
 const allowedOrigins = [
     "https://live-whats-chatting-production.up.railway.app",
     "http://localhost:3000",
@@ -18,9 +18,7 @@ const allowedOrigins = [
 
 app.use(cors({
     origin: function (origin, callback) {
-        // Allow requests with no origin (like mobile apps, curl, etc)
         if (!origin) return callback(null, true);
-        
         if (allowedOrigins.indexOf(origin) === -1) {
             const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
             return callback(new Error(msg), false);
@@ -89,9 +87,14 @@ const ADMIN_API_KEY = 'hjchat-admin-secret-key-2024';
 // Admin API middleware
 function verifyAdminKey(req, res, next) {
     const apiKey = req.headers['x-api-key'];
+    console.log('🔑 Admin API Key received:', apiKey);
+    console.log('🔑 Expected API Key:', ADMIN_API_KEY);
+    
     if (apiKey === ADMIN_API_KEY) {
+        console.log('✅ API Key verified');
         next();
     } else {
+        console.log('❌ API Key invalid');
         res.status(401).json({ error: 'Unauthorized - Invalid API Key' });
     }
 }
@@ -100,6 +103,7 @@ function verifyAdminKey(req, res, next) {
 
 // Get dashboard stats
 app.get('/api/admin/stats', verifyAdminKey, (req, res) => {
+    console.log('📊 Stats endpoint called');
     const onlineCount = Array.from(users.values()).filter(u => u.socketId).length;
     const filesCount = fs.existsSync('uploads') ? fs.readdirSync('uploads').length : 0;
     
@@ -121,6 +125,7 @@ app.get('/api/admin/stats', verifyAdminKey, (req, res) => {
 
 // Get all users
 app.get('/api/admin/users', verifyAdminKey, (req, res) => {
+    console.log('👥 Users endpoint called');
     const userList = [];
     users.forEach((value, key) => {
         userList.push({
@@ -133,6 +138,7 @@ app.get('/api/admin/users', verifyAdminKey, (req, res) => {
             joined: new Date().toISOString()
         });
     });
+    console.log(`📋 Returning ${userList.length} users`);
     res.json(userList);
 });
 
