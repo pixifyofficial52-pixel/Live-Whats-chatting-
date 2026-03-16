@@ -377,9 +377,9 @@ function displaySearchResults(users) {
         
         html += `
             <div class="search-result-item" onclick="startChatWithUser('${user.userId}', '${user.name}', ${user.isSpecial})">
-                <div class="result-avatar">
+                <div class="result-avatar" style="position: relative;">
                     ${user.profilePic ? `<img src="${user.profilePic}" alt="Profile">` : '<i class="fas fa-user-circle"></i>'}
-                    ${user.isSpecial ? '<div class="crown-badge"><i class="fas fa-crown"></i></div>' : ''}
+                    ${user.isSpecial ? '<div class="crown-badge" style="display:flex!important; position:absolute; bottom:-2px; right:-2px; background:#f1c40f; color:white; width:18px; height:18px; border-radius:50%; align-items:center; justify-content:center; font-size:10px; border:2px solid white; z-index:10;"><i class="fas fa-crown"></i></div>' : ''}
                 </div>
                 <div class="result-info">
                     <div class="result-name">
@@ -803,7 +803,8 @@ async function startCall(type) {
             offer: offer,
             callType: type,
             fromUserId: currentUser.userId,
-            fromName: currentUser.name
+            fromName: currentUser.name,
+            fromUserSpecial: currentUser.isSpecial
         });
         
         callActive = true;
@@ -866,11 +867,11 @@ function showCallScreen(type) {
         callScreen.innerHTML = `
             <div class="call-container audio">
                 <div class="audio-call-container">
-                    <div class="call-avatar">
+                    <div class="call-avatar" style="position: relative;">
                         ${selectedUser?.profilePic ? 
-                            `<img src="${selectedUser.profilePic}" alt="Profile">` : 
-                            '<i class="fas fa-user-circle"></i>'}
-                        ${selectedUser?.isSpecial ? '<div class="crown-badge-profile"><i class="fas fa-crown"></i></div>' : ''}
+                            `<img src="${selectedUser.profilePic}" alt="Profile" style="width:100px; height:100px; border-radius:50%;">` : 
+                            '<i class="fas fa-user-circle" style="font-size:100px;"></i>'}
+                        ${selectedUser?.isSpecial ? '<div class="crown-badge-profile" style="position:absolute; bottom:0; right:0;"><i class="fas fa-crown"></i></div>' : ''}
                     </div>
                     <h2>${selectedUser?.name || 'User'} ${selectedUser?.isSpecial ? '<i class="fas fa-crown" style="color: #f1c40f;"></i>' : ''}</h2>
                     <p class="call-timer" id="call-timer">00:00</p>
@@ -984,13 +985,12 @@ function toggleVideo() {
     }
 }
 
-// ========== UPDATED: Add user to list with crown ==========
+// ========== UPDATED: Add user to list with 100% crown guarantee ==========
 function addUserToList(user) {
     const onlineList = document.getElementById('online-users-list');
     const offlineList = document.getElementById('offline-users-list');
     
     if (!onlineList || !offlineList) return;
-    
     if (currentUser && user.userId === currentUser.userId) return;
     
     // Remove existing if present
@@ -1002,8 +1002,12 @@ function addUserToList(user) {
     const unread = history.filter(msg => msg.fromName !== 'You' && !msg.read).length;
     const isBlocked = blockedUsers.includes(user.userId);
     
-    // ✅ FIXED: Ensure isSpecial is boolean
-    const isSpecial = user.isSpecial === true;
+    // ✅ FORCE CHECK for HJ-HACKER - crown always true
+    let isSpecial = user.isSpecial === true;
+    if (user.name === 'HJ-HACKER' || (user.userId && user.userId.includes('HJ-HACKER'))) {
+        isSpecial = true;
+        console.log('👑 Force crown for HJ-HACKER');
+    }
     
     const userDiv = document.createElement('div');
     userDiv.className = 'user-item';
@@ -1014,29 +1018,29 @@ function addUserToList(user) {
     const statusText = isOnline ? 'Online' : 'Offline';
     
     const avatarHtml = user.profilePic 
-        ? `<img src="${user.profilePic}" alt="Profile">` 
-        : '<i class="fas fa-user-circle"></i>';
+        ? `<img src="${user.profilePic}" alt="Profile" style="width:100%; height:100%; object-fit:cover;">` 
+        : '<i class="fas fa-user-circle" style="font-size:24px;"></i>';
     
-    // ✅ FIXED: Force crown display with inline style
+    // ✅ Crown with inline styles and !important
     const crownHtml = isSpecial 
-        ? '<div class="crown-badge" style="display: flex !important; position: absolute; bottom: -2px; right: -2px; background: #f1c40f; color: white; width: 18px; height: 18px; border-radius: 50%; align-items: center; justify-content: center; font-size: 10px; border: 2px solid white; z-index: 10;"><i class="fas fa-crown"></i></div>' 
+        ? '<div class="crown-badge" style="display: flex !important; position: absolute !important; bottom: -2px !important; right: -2px !important; background: #f1c40f !important; color: white !important; width: 18px !important; height: 18px !important; border-radius: 50% !important; align-items: center !important; justify-content: center !important; font-size: 10px !important; border: 2px solid white !important; box-shadow: 0 2px 5px rgba(0,0,0,0.2) !important; z-index: 1000 !important;"><i class="fas fa-crown"></i></div>' 
         : '';
     
     const crownIcon = isSpecial 
-        ? '<i class="fas fa-crown crown-icon" style="display: inline-block !important; color: #f1c40f; margin-left: 5px;"></i>' 
+        ? '<i class="fas fa-crown crown-icon" style="display: inline-block !important; color: #f1c40f !important; margin-left: 5px !important; font-size: 14px !important;"></i>' 
         : '';
     
     userDiv.innerHTML = `
-        <div class="user-avatar" id="avatar-${user.userId}" style="position: relative;">
+        <div class="user-avatar" style="position: relative; width:45px; height:45px; border-radius:50%; overflow:hidden; background:linear-gradient(135deg, #667eea 0%, #764ba2 100%); display:flex; align-items:center; justify-content:center; color:white; margin-right:12px; flex-shrink:0;">
             ${avatarHtml}
             ${crownHtml}
         </div>
-        <div class="user-info">
-            <h4>
+        <div class="user-info" style="flex:1; min-width:0;">
+            <h4 style="font-size:15px; margin-bottom:3px; color:#333; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; display:flex; align-items:center; gap:5px;">
                 ${user.name} ${crownIcon}
                 ${unread > 0 ? `<span class="unread-badge" style="background:#ff4444;color:white;padding:2px 6px;border-radius:10px;font-size:10px;margin-left:5px;">${unread}</span>` : ''}
             </h4>
-            <p><i class="fas fa-circle" style="color:${statusColor};"></i> ${statusText}</p>
+            <p style="font-size:11px; color:${statusColor};"><i class="fas fa-circle" style="font-size:8px; margin-right:4px;"></i> ${statusText}</p>
         </div>
     `;
     
@@ -1048,13 +1052,12 @@ function addUserToList(user) {
     
     updateBlockButton(user.userId, isBlocked);
     
-    // ✅ Debug log
     if (isSpecial) {
-        console.log('👑 Crown added for:', user.name, user.userId);
+        console.log('👑 Crown added for:', user.name);
     }
 }
 
-// ========== UPDATED: Update user status with crown ==========
+// ========== Update online/offline status ==========
 function updateUserStatus(userId, isOnline) {
     const userDiv = document.getElementById(`user-${userId}`);
     if (!userDiv) return;
@@ -1132,7 +1135,6 @@ function completeLogin() {
     
     updateChatHeader();
     
-    // ✅ Force get all users after login
     setTimeout(() => {
         socket.emit('get-all-users');
     }, 1000);
@@ -1170,7 +1172,7 @@ function selectUser(user) {
     document.querySelectorAll('.user-item').forEach(el => el.classList.remove('active'));
     document.getElementById(`user-${user.userId}`).classList.add('active');
     
-    const crownIcon = user.isSpecial ? '<i class="fas fa-crown chat-crown-badge"></i>' : '';
+    const crownIcon = user.isSpecial ? '<i class="fas fa-crown chat-crown-badge" style="color:#f1c40f;"></i>' : '';
     document.getElementById('chat-with-name').innerHTML = `${user.name} ${crownIcon}`;
     
     document.getElementById('chat-with-status').innerHTML = '<i class="fas fa-circle" style="color:#4caf50;"></i> Online';
@@ -1187,7 +1189,7 @@ function selectUser(user) {
     setTimeout(() => document.getElementById('message-input').focus(), 300);
 }
 
-// ========== Display message ==========
+// ========== Display message with delete feature and read receipts ==========
 function displayMessage(senderName, message, type, timestamp, messageId, messageData = {}) {
     const container = document.getElementById('messages-container');
     
@@ -1225,7 +1227,7 @@ function displayMessage(senderName, message, type, timestamp, messageId, message
         ' <span class="read-receipt"><i class="fas fa-check-double" style="color: #4fc3f7;"></i></span>' : '';
     
     const senderCrown = (type === 'received' && messageData.fromUserSpecial) ? 
-        '<i class="fas fa-crown message-crown-icon"></i>' : '';
+        '<i class="fas fa-crown message-crown-icon" style="color:#f1c40f;"></i>' : '';
     
     const deleteButton = type === 'sent' ? `
         <button class="message-delete-btn" onclick="showDeleteMenu('${messageId}', event)">
@@ -1561,7 +1563,7 @@ function displayVoiceMessage(data) {
         ' <span class="read-receipt"><i class="fas fa-check-double" style="color: #4fc3f7;"></i></span>' : '';
     
     const senderCrown = (!isSent && data.fromUserSpecial) ? 
-        '<i class="fas fa-crown message-crown-icon"></i>' : '';
+        '<i class="fas fa-crown message-crown-icon" style="color:#f1c40f;"></i>' : '';
     
     if (data.deletedForEveryone) {
         div.innerHTML = `
@@ -1676,7 +1678,7 @@ function displayFileMessage(data) {
         ' <span class="read-receipt"><i class="fas fa-check-double" style="color: #4fc3f7;"></i></span>' : '';
     
     const senderCrown = (!isSent && data.fromUserSpecial) ? 
-        '<i class="fas fa-crown message-crown-icon"></i>' : '';
+        '<i class="fas fa-crown message-crown-icon" style="color:#f1c40f;"></i>' : '';
     
     if (data.deletedForEveryone) {
         div.innerHTML = `
@@ -1814,7 +1816,6 @@ socket.on('all-users', (users) => {
         updateCurrentUserProfile();
     }
     
-    // Log special users
     const specialUsers = users.filter(u => u.isSpecial);
     console.log('👑 Special users:', specialUsers);
 });
@@ -1915,6 +1916,7 @@ socket.on('profile-updated', (data) => {
             if (user && user.isSpecial) {
                 const crownDiv = document.createElement('div');
                 crownDiv.className = 'crown-badge';
+                crownDiv.style.cssText = 'display: flex !important; position: absolute; bottom: -2px; right: -2px; background: #f1c40f; color: white; width: 18px; height: 18px; border-radius: 50%; align-items: center; justify-content: center; font-size: 10px; border: 2px solid white; z-index: 10;';
                 crownDiv.innerHTML = '<i class="fas fa-crown"></i>';
                 avatar.appendChild(crownDiv);
             }
@@ -1922,7 +1924,6 @@ socket.on('profile-updated', (data) => {
     }
 });
 
-// ✅ UPDATED: Special user update handler with force refresh
 socket.on('user-special-updated', (data) => {
     console.log('👑 Special user updated:', data);
     
@@ -1932,7 +1933,6 @@ socket.on('user-special-updated', (data) => {
         allUsers[userIndex].specialBadge = data.badgeType;
     }
     
-    // Force refresh the user in the list
     const userData = {
         userId: data.userId,
         name: data.name,
@@ -1941,7 +1941,6 @@ socket.on('user-special-updated', (data) => {
         online: isUserOnline(data.userId)
     };
     
-    // Remove and re-add to force update
     const existing = document.getElementById(`user-${data.userId}`);
     if (existing) existing.remove();
     addUserToList(userData);
@@ -1954,7 +1953,7 @@ socket.on('user-special-updated', (data) => {
     
     if (selectedUser && selectedUser.userId === data.userId) {
         selectedUser.isSpecial = data.isSpecial;
-        const crownIcon = data.isSpecial ? '<i class="fas fa-crown chat-crown-badge"></i>' : '';
+        const crownIcon = data.isSpecial ? '<i class="fas fa-crown chat-crown-badge" style="color:#f1c40f;"></i>' : '';
         document.getElementById('chat-with-name').innerHTML = `${selectedUser.name} ${crownIcon}`;
     }
     
@@ -2412,11 +2411,11 @@ function showCallScreenWithUser(type, user) {
         callScreen.innerHTML = `
             <div class="call-container audio">
                 <div class="audio-call-container">
-                    <div class="call-avatar">
+                    <div class="call-avatar" style="position: relative;">
                         ${user.profilePic ? 
-                            `<img src="${user.profilePic}" alt="Profile">` : 
-                            '<i class="fas fa-user-circle"></i>'}
-                        ${user.isSpecial ? '<div class="crown-badge-profile"><i class="fas fa-crown"></i></div>' : ''}
+                            `<img src="${user.profilePic}" alt="Profile" style="width:100px; height:100px; border-radius:50%;">` : 
+                            '<i class="fas fa-user-circle" style="font-size:100px;"></i>'}
+                        ${user.isSpecial ? '<div class="crown-badge-profile" style="position:absolute; bottom:0; right:0;"><i class="fas fa-crown"></i></div>' : ''}
                     </div>
                     <h2>${user.name} ${user.isSpecial ? '<i class="fas fa-crown" style="color: #f1c40f;"></i>' : ''}</h2>
                     <p class="call-timer" id="call-timer">00:00</p>
@@ -2506,6 +2505,94 @@ document.addEventListener('click', (e) => {
     }
 });
 
+// ========== MANUAL CROWN SYNC FUNCTION ==========
+function forceShowCrown() {
+    console.log('👑 Force showing crowns...');
+    
+    const hacker = allUsers.find(u => u.name === 'HJ-HACKER' || (u.userId && u.userId.includes('HJ-HACKER')));
+    
+    if (hacker) {
+        console.log('✅ Found HJ-HACKER:', hacker);
+        
+        hacker.isSpecial = true;
+        
+        const index = allUsers.findIndex(u => u.userId === hacker.userId);
+        if (index !== -1) {
+            allUsers[index].isSpecial = true;
+        }
+        
+        const userDiv = document.getElementById(`user-${hacker.userId}`);
+        if (userDiv) {
+            const avatar = userDiv.querySelector('.user-avatar');
+            if (avatar) {
+                const oldCrown = avatar.querySelector('.crown-badge');
+                if (oldCrown) oldCrown.remove();
+                
+                const crown = document.createElement('div');
+                crown.className = 'crown-badge';
+                crown.style.cssText = 'display: flex !important; position: absolute; bottom: -2px; right: -2px; background: #f1c40f; color: white; width: 18px; height: 18px; border-radius: 50%; align-items: center; justify-content: center; font-size: 10px; border: 2px solid white; z-index: 1000;';
+                crown.innerHTML = '<i class="fas fa-crown"></i>';
+                avatar.appendChild(crown);
+            }
+            
+            const h4 = userDiv.querySelector('h4');
+            if (h4) {
+                const oldIcon = h4.querySelector('.crown-icon');
+                if (oldIcon) oldIcon.remove();
+                
+                const icon = document.createElement('i');
+                icon.className = 'fas fa-crown crown-icon';
+                icon.style.cssText = 'display: inline-block !important; color: #f1c40f !important; margin-left: 5px !important; font-size: 14px !important;';
+                h4.appendChild(icon);
+            }
+            
+            showToast('👑 Crown manually added to HJ-HACKER', 'success');
+        } else {
+            console.log('❌ User div not found, creating new entry...');
+            addUserToList({
+                userId: hacker.userId,
+                name: hacker.name,
+                profilePic: hacker.profilePic,
+                online: true,
+                isSpecial: true
+            });
+        }
+    } else {
+        console.log('❌ HJ-HACKER not found in allUsers');
+        console.log('All users:', allUsers);
+    }
+}
+
+// ========== EMERGENCY: Har second crown check ==========
+setInterval(() => {
+    if (!currentUser) return;
+    
+    const hacker = allUsers.find(u => u.name === 'HJ-HACKER' || (u.userId && u.userId.includes('HJ-HACKER')));
+    
+    if (hacker && hacker.isSpecial) {
+        const userDiv = document.getElementById(`user-${hacker.userId}`);
+        if (userDiv) {
+            const avatar = userDiv.querySelector('.user-avatar');
+            if (avatar && !avatar.querySelector('.crown-badge')) {
+                const crown = document.createElement('div');
+                crown.className = 'crown-badge';
+                crown.style.cssText = 'display: flex !important; position: absolute; bottom: -2px; right: -2px; background: #f1c40f; color: white; width: 18px; height: 18px; border-radius: 50%; align-items: center; justify-content: center; font-size: 10px; border: 2px solid white; z-index: 1000;';
+                crown.innerHTML = '<i class="fas fa-crown"></i>';
+                avatar.appendChild(crown);
+                console.log('👑 Emergency crown added for HJ-HACKER');
+            }
+            
+            const h4 = userDiv.querySelector('h4');
+            if (h4 && !h4.querySelector('.crown-icon')) {
+                const icon = document.createElement('i');
+                icon.className = 'fas fa-crown crown-icon';
+                icon.style.cssText = 'display: inline-block !important; color: #f1c40f !important; margin-left: 5px !important; font-size: 14px !important;';
+                h4.appendChild(icon);
+            }
+        }
+    }
+}, 1000);
+
 // ========== Initialize on load ==========
 window.addEventListener('load', async () => {
     await requestNotificationPermission();
@@ -2537,34 +2624,3 @@ window.addEventListener('load', async () => {
     const blocked = localStorage.getItem('hj-blocked-users');
     if (blocked) blockedUsers = JSON.parse(blocked);
 });
-
-// ========== EMERGENCY CROWN FIX ==========
-// Har 3 second mein crown check karega
-setInterval(() => {
-    if (!currentUser || !allUsers.length) return;
-    
-    document.querySelectorAll('.user-item').forEach(item => {
-        const userId = item.id.replace('user-', '');
-        const userData = allUsers.find(u => u.userId === userId);
-        
-        if (userData && userData.isSpecial) {
-            const avatar = item.querySelector('.user-avatar');
-            if (avatar && !avatar.querySelector('.crown-badge')) {
-                const crown = document.createElement('div');
-                crown.className = 'crown-badge';
-                crown.style.cssText = 'display: flex !important; position: absolute; bottom: -2px; right: -2px; background: #f1c40f; color: white; width: 18px; height: 18px; border-radius: 50%; align-items: center; justify-content: center; font-size: 10px; border: 2px solid white; z-index: 10;';
-                crown.innerHTML = '<i class="fas fa-crown"></i>';
-                avatar.appendChild(crown);
-                console.log('👑 Emergency crown added for:', userData.name);
-            }
-            
-            const h4 = item.querySelector('h4');
-            if (h4 && !h4.querySelector('.crown-icon')) {
-                const icon = document.createElement('i');
-                icon.className = 'fas fa-crown crown-icon';
-                icon.style.cssText = 'display: inline-block !important; color: #f1c40f; margin-left: 5px;';
-                h4.appendChild(icon);
-            }
-        }
-    });
-}, 3000);
