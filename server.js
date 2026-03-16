@@ -16,9 +16,8 @@ const allowedOrigins = [
 
 app.use(cors({
     origin: allowedOrigins,
-    methods: ["GET", "POST", "DELETE", "OPTIONS"],
-    credentials: true,
-    allowedHeaders: ["Content-Type", "Authorization", "x-api-key"]
+    methods: ["GET", "POST"],
+    credentials: true
 }));
 
 // ========== Force HTTPS redirect ==========
@@ -31,11 +30,34 @@ app.use((req, res, next) => {
 
 app.use(express.static(path.join(__dirname)));
 app.use('/uploads', express.static('uploads'));
+app.use(express.json()); // For parsing JSON
 
 // Create uploads folder if not exists
 if (!fs.existsSync('uploads')) {
     fs.mkdirSync('uploads');
 }
+
+// ========== Data Stores ==========
+const users = new Map(); // userId -> {socketId, name, profilePic, deviceId, isSpecial, specialBadge}
+const userNames = new Map(); // name -> userId (for uniqueness)
+const userDevices = new Map(); // deviceId -> userId (for device tracking)
+const offlineMessages = new Map(); // userId -> [messages] (store offline messages)
+const specialUsers = new Set(); // Store special user IDs
+const messageHistory = []; // Store recent messages for admin
+
+// Admin key for special user management
+const ADMIN_KEY = "HJ-HACKER76768085&SBL-HACKER76768085";
+
+// ========== Admin authentication middleware ==========
+const authenticateAdmin = (req, res, next) => {
+    const adminKey = req.headers['admin-key'] || req.query.key;
+    
+    if (adminKey === ADMIN_KEY) {
+        next();
+    } else {
+        res.status(401).json({ error: 'Unauthorized access' });
+    }
+};
 
 // File upload setup
 const storage = multer.diskStorage({
@@ -63,267 +85,272 @@ const io = socketIo(server, {
     allowEIO3: true
 });
 
-// ========== Data Stores ==========
-const users = new Map(); // userId -> {socketId, name, profilePic, deviceId}
-const userNames = new Map(); // name -> userId (for uniqueness)
-const userDevices = new Map(); // deviceId -> userId (for device tracking)
-const offlineMessages = new Map(); // userId -> [messages] (store offline messages)
-const blockedUsers = new Set(); // Store blocked user IDs
-const callLogs = []; // Store call history for admin
-const messageStore = []; // Store messages for admin (optional)
-const adminUsers = new Set(); // Store user IDs with crown 👑
-
-// ========== ADMIN API CONFIGURATION ==========
-const ADMIN_API_KEY = 'hjchat-admin-secret-key-2024';
-
-// Admin API middleware
-function verifyAdminKey(req, res, next) {
-    const apiKey = req.headers['x-api-key'];
-    if (apiKey === ADMIN_API_KEY) {
-        next();
-    } else {
-        res.status(401).json({ error: 'Unauthorized - Invalid API Key' });
-    }
-}
-
 // ========== ADMIN API ENDPOINTS ==========
 
-// Get dashboard stats
-app.get('/api/admin/stats', verifyAdminKey, (req, res) => {
-    const onlineCount = Array.from(users.values()).filter(u => u.socketId).length;
-    const filesCount = fs.existsSync('uploads') ? fs.readdirSync('uploads').length : 0;
-    
-    // Count today's calls
-    const today = new Date().toDateString();
-    const callsToday = callLogs.filter(call => 
-        new Date(call.timestamp).toDateString() === today
-    ).length;
-    
-    res.json({
-        totalUsers: users.size,
-        onlineUsers: onlineCount,
-        totalMessages: messageStore.length,
-        callsToday: callsToday,
-        totalFiles: filesCount,
-        blockedUsers: blockedUsers.size,
-        adminUsers: adminUsers.size
-    });
+// Serve admin panel
+app.get('/admin', (req, res) => {
+    res.sendFile(path.join(__dirname, 'admin.html'));
 });
 
-// Get all users (with admin status)
-app.get('/api/admin/users', verifyAdminKey, (req, res) => {
+// Get all users for admin
+app.get('/api/admin/users', authenticateAdmin, (req, res) => {
     const userList = [];
     users.forEach((value, key) => {
         userList.push({
             userId: key,
             name: value.name,
+            profilePic: value.profilePic,
+            deviceId: value.deviceId,
             online: true,
-            deviceId: value.deviceId || 'N/A',
-            profilePic: value.profilePic || null,
-            lastSeen: new Date().toISOString(),
-            joined: new Date().toISOString(),
-            isAdmin: adminUsers.has(key) // 👑 crown status
+            socketId: value.socketId,
+            isSpecial: value.isSpecial || false,
+            specialBadge: value.specialBadge || null
         });
     });
     res.json(userList);
 });
 
-// Make user admin (give crown)
-app.post('/api/admin/make-admin/:userId', verifyAdminKey, (req, res) => {
-    const { userId } = req.params;
-    
-    if (users.has(userId)) {
-        adminUsers.add(userId);
-        
-        // Notify all users about admin status change
-        io.emit('user-admin-status', {
-            userId: userId,
-            isAdmin: true
-        });
-        
-        console.log(`👑 User ${userId} is now an admin with crown`);
-        res.json({ success: true, message: 'User is now admin with crown' });
-    } else {
-        res.status(404).json({ error: 'User not found' });
+// Get dashboard stats
+app.get('/api/admin/stats', authenticateAdmin, (req, res) => {
+    // Count files in uploads
+    let fileCount = 0;
+    try {
+        fileCount = fs.readdirSync('uploads').length;
+    } catch (e) {
+        fileCount = 0;
     }
-});
 
-// Remove admin status (remove crown)
-app.post('/api/admin/remove-admin/:userId', verifyAdminKey, (req, res) => {
-    const { userId } = req.params;
-    
-    adminUsers.delete(userId);
-    
-    // Notify all users about admin status change
-    io.emit('user-admin-status', {
-        userId: userId,
-        isAdmin: false
+    res.json({
+        totalUsers: users.size,
+        onlineUsers: users.size,
+        specialUsers: specialUsers.size,
+        totalMessages: messageHistory.length,
+        totalFiles: fileCount,
+        offlineMessages: offlineMessages.size
     });
-    
-    console.log(`User ${userId} is no longer admin`);
-    res.json({ success: true, message: 'Admin status removed' });
 });
 
-// Block/Unblock user
-app.post('/api/admin/block/:userId', verifyAdminKey, (req, res) => {
-    const { userId } = req.params;
-    
-    if (blockedUsers.has(userId)) {
-        blockedUsers.delete(userId);
-        res.json({ success: true, message: 'User unblocked', blocked: false });
-    } else {
-        blockedUsers.add(userId);
-        // Disconnect user if online
-        if (users.has(userId)) {
-            const user = users.get(userId);
-            if (user.socketId) {
-                io.to(user.socketId).emit('force-disconnect', { reason: 'blocked' });
-            }
+// Get all special users
+app.get('/api/admin/special-users', authenticateAdmin, (req, res) => {
+    const specials = [];
+    users.forEach((value, key) => {
+        if (value.isSpecial) {
+            specials.push({
+                userId: key,
+                name: value.name,
+                profilePic: value.profilePic,
+                badgeType: value.specialBadge,
+                online: true,
+                deviceId: value.deviceId
+            });
         }
-        res.json({ success: true, message: 'User blocked', blocked: true });
-    }
+    });
+    res.json(specials);
 });
 
-// Delete user
-app.delete('/api/admin/user/:userId', verifyAdminKey, (req, res) => {
+// Get single user status
+app.get('/api/admin/user-status/:userId', authenticateAdmin, (req, res) => {
     const { userId } = req.params;
     
     if (users.has(userId)) {
         const user = users.get(userId);
-        
-        // Disconnect user if online
-        if (user.socketId) {
-            io.to(user.socketId).emit('force-disconnect', { reason: 'deleted' });
-        }
-        
-        // Remove from all maps
-        users.delete(userId);
-        userNames.delete(user.name);
-        adminUsers.delete(userId); // Remove from admin if was admin
-        
-        // Remove from device tracking
-        if (user.deviceId) {
-            userDevices.delete(user.deviceId);
-        }
-        
-        console.log(`Admin deleted user: ${userId} (${user.name})`);
-        res.json({ success: true, message: 'User deleted successfully' });
+        res.json({
+            userId: userId,
+            name: user.name,
+            isSpecial: user.isSpecial || false,
+            badgeType: user.specialBadge || null,
+            profilePic: user.profilePic,
+            deviceId: user.deviceId
+        });
     } else {
         res.status(404).json({ error: 'User not found' });
     }
 });
 
-// Get messages for specific user
-app.get('/api/admin/messages/:userId', verifyAdminKey, (req, res) => {
-    const { userId } = req.params;
-    
-    // Filter messages for this user (both sent and received)
-    const userMessages = messageStore.filter(msg => 
-        msg.fromUserId === userId || msg.toUserId === userId
-    ).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-    
-    res.json(userMessages);
+// Get message history
+app.get('/api/admin/messages', authenticateAdmin, (req, res) => {
+    res.json(messageHistory.slice(-100)); // Last 100 messages
 });
 
-// Delete specific message
-app.post('/api/admin/message', verifyAdminKey, (req, res) => {
-    const { messageId } = req.body;
-    
-    // Broadcast delete to all users
-    io.emit('admin-delete-message', { messageId });
-    
-    // Remove from message store if exists
-    const index = messageStore.findIndex(m => m.messageId === messageId);
-    if (index !== -1) {
-        messageStore.splice(index, 1);
+// Get files list
+app.get('/api/admin/files', authenticateAdmin, (req, res) => {
+    try {
+        const files = fs.readdirSync('uploads').map(file => {
+            const stats = fs.statSync(path.join('uploads', file));
+            return {
+                name: file,
+                size: stats.size,
+                created: stats.birthtime,
+                url: `/uploads/${file}`
+            };
+        });
+        res.json(files);
+    } catch (e) {
+        res.json([]);
     }
-    
-    res.json({ success: true, message: 'Message deleted' });
 });
 
-// Get call logs
-app.get('/api/admin/calls', verifyAdminKey, (req, res) => {
-    res.json(callLogs);
-});
-
-// Get all files
-app.get('/api/admin/files', verifyAdminKey, (req, res) => {
-    if (!fs.existsSync('uploads')) {
-        return res.json([]);
-    }
+// ========== MAKE USER SPECIAL (ADD CROWN) ==========
+app.post('/api/admin/make-special', authenticateAdmin, express.json(), (req, res) => {
+    const { userId, badgeType } = req.body;
     
-    const files = fs.readdirSync('uploads').map(file => {
-        const filePath = path.join('uploads', file);
-        const stats = fs.statSync(filePath);
-        return {
-            name: file,
-            size: stats.size,
-            uploaded: stats.birthtime,
-            url: `/uploads/${file}`
-        };
-    });
-    res.json(files);
-});
-
-// Delete file
-app.delete('/api/admin/file/:name', verifyAdminKey, (req, res) => {
-    const { name } = req.params;
-    const filePath = path.join('uploads', name);
-    
-    if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-        res.json({ success: true, message: 'File deleted' });
+    if (users.has(userId)) {
+        const user = users.get(userId);
+        user.isSpecial = true;
+        user.specialBadge = badgeType || 'crown';
+        users.set(userId, user);
+        
+        specialUsers.add(userId);
+        
+        // Broadcast to all users
+        io.emit('user-special-updated', {
+            userId: userId,
+            isSpecial: true,
+            badgeType: user.specialBadge,
+            name: user.name,
+            action: 'added'
+        });
+        
+        // Send to specific user
+        io.to(userId).emit('special-status-changed', {
+            isSpecial: true,
+            badgeType: user.specialBadge
+        });
+        
+        res.json({ 
+            success: true, 
+            message: `👑 Crown awarded to ${user.name}!`,
+            user: {
+                userId: userId,
+                name: user.name,
+                badgeType: user.specialBadge
+            }
+        });
     } else {
-        res.status(404).json({ error: 'File not found' });
+        res.status(404).json({ error: 'User not found' });
     }
 });
 
-// Get blocked words list
-app.get('/api/admin/blocked-words', verifyAdminKey, (req, res) => {
-    const blockedWords = [];
-    res.json(blockedWords);
+// ========== REMOVE SPECIAL STATUS (REMOVE CROWN) ==========
+app.post('/api/admin/remove-special', authenticateAdmin, express.json(), (req, res) => {
+    const { userId } = req.body;
+    
+    if (users.has(userId)) {
+        const user = users.get(userId);
+        
+        if (!user.isSpecial) {
+            return res.status(400).json({ error: 'User is not a special user' });
+        }
+        
+        const oldBadge = user.specialBadge;
+        user.isSpecial = false;
+        user.specialBadge = null;
+        users.set(userId, user);
+        
+        specialUsers.delete(userId);
+        
+        // Broadcast to all users
+        io.emit('user-special-updated', {
+            userId: userId,
+            isSpecial: false,
+            name: user.name,
+            action: 'removed',
+            oldBadge: oldBadge
+        });
+        
+        // Send to specific user
+        io.to(userId).emit('special-status-changed', {
+            isSpecial: false,
+            badgeType: null
+        });
+        
+        res.json({ 
+            success: true, 
+            message: `👑 Crown removed from ${user.name}`,
+            user: {
+                userId: userId,
+                name: user.name
+            }
+        });
+    } else {
+        res.status(404).json({ error: 'User not found' });
+    }
 });
 
-// Add blocked word
-app.post('/api/admin/blocked-words', verifyAdminKey, (req, res) => {
-    const { word } = req.body;
-    res.json({ success: true, message: 'Word added' });
+// ========== UPDATE BADGE TYPE ==========
+app.post('/api/admin/update-badge', authenticateAdmin, express.json(), (req, res) => {
+    const { userId, badgeType } = req.body;
+    
+    if (users.has(userId)) {
+        const user = users.get(userId);
+        
+        if (!user.isSpecial) {
+            return res.status(400).json({ error: 'User is not a special user' });
+        }
+        
+        const oldBadge = user.specialBadge;
+        user.specialBadge = badgeType;
+        users.set(userId, user);
+        
+        // Broadcast badge update
+        io.emit('user-special-updated', {
+            userId: userId,
+            isSpecial: true,
+            badgeType: badgeType,
+            name: user.name,
+            action: 'updated',
+            oldBadge: oldBadge
+        });
+        
+        io.to(userId).emit('special-status-changed', {
+            isSpecial: true,
+            badgeType: badgeType
+        });
+        
+        res.json({ 
+            success: true, 
+            message: `Badge updated for ${user.name}`,
+            user: {
+                userId: userId,
+                name: user.name,
+                badgeType: badgeType
+            }
+        });
+    } else {
+        res.status(404).json({ error: 'User not found' });
+    }
 });
 
-// Delete blocked word
-app.delete('/api/admin/blocked-words/:word', verifyAdminKey, (req, res) => {
-    const { word } = req.params;
-    res.json({ success: true, message: 'Word removed' });
+// Ban user
+app.post('/api/admin/ban-user', authenticateAdmin, express.json(), (req, res) => {
+    const { userId } = req.body;
+    
+    if (users.has(userId)) {
+        const user = users.get(userId);
+        
+        // Disconnect user
+        io.to(user.socketId).emit('force-disconnect', { reason: 'banned' });
+        
+        // Remove from maps
+        users.delete(userId);
+        userNames.delete(user.name);
+        if (user.deviceId) {
+            userDevices.delete(user.deviceId);
+        }
+        if (user.isSpecial) {
+            specialUsers.delete(userId);
+        }
+        
+        res.json({ 
+            success: true, 
+            message: `User ${user.name} has been banned` 
+        });
+    } else {
+        res.status(404).json({ error: 'User not found' });
+    }
 });
 
-// Get settings
-app.get('/api/admin/settings', verifyAdminKey, (req, res) => {
-    const settings = {
-        siteName: 'HJH Chat',
-        maintenanceMode: false,
-        enableVoice: true,
-        enableVideo: true,
-        maxMessageLength: 5000,
-        maxFileSize: 50,
-        allowedFileTypes: ['jpg', 'png', 'pdf', 'mp3', 'mp4']
-    };
-    res.json(settings);
-});
-
-// Update settings
-app.post('/api/admin/settings', verifyAdminKey, (req, res) => {
-    const settings = req.body;
-    fs.writeFileSync('settings.json', JSON.stringify(settings, null, 2));
-    console.log('Settings updated:', settings);
-    res.json({ success: true, message: 'Settings saved' });
-});
-
-// ========== ADMIN PANEL ROUTE ==========
-app.get('/admin', (req, res) => {
-    res.sendFile(path.join(__dirname, 'admin.html'));
-});
-
-// ========== Regular Routes ==========
+// Serve main page
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
@@ -340,22 +367,29 @@ app.post('/upload', upload.single('file'), (req, res) => {
     });
 });
 
-// ========== Socket.io Handlers ==========
+// ========== SOCKET.IO EVENTS ==========
 io.on('connection', (socket) => {
     console.log('New user connected:', socket.id);
 
     // ========== Get all users for search ==========
-    socket.on('get-all-users', () => {
+    socket.on('get-all-users', (callback) => {
         const allUsers = [];
         users.forEach((value, key) => {
             allUsers.push({
                 userId: key,
                 name: value.name,
                 profilePic: value.profilePic,
-                isAdmin: adminUsers.has(key)
+                isSpecial: value.isSpecial || false,
+                specialBadge: value.specialBadge || null,
+                online: true
             });
         });
-        socket.emit('all-users', allUsers);
+        
+        if (typeof callback === 'function') {
+            callback(allUsers);
+        } else {
+            socket.emit('all-users', allUsers);
+        }
     });
 
     // ========== Search users ==========
@@ -374,7 +408,8 @@ io.on('connection', (socket) => {
                     userId: key,
                     name: value.name,
                     profilePic: value.profilePic,
-                    isAdmin: adminUsers.has(key)
+                    isSpecial: value.isSpecial || false,
+                    specialBadge: value.specialBadge || null
                 });
             }
         });
@@ -406,12 +441,6 @@ io.on('connection', (socket) => {
     socket.on('user-login', (data) => {
         const { userId, name, profilePic } = data;
         
-        // Check if user is blocked
-        if (blockedUsers.has(userId)) {
-            socket.emit('login-error', 'Your account has been blocked by admin');
-            return;
-        }
-        
         const deviceId = userId.split('_')[1] || userId;
         
         if (userDevices.has(deviceId)) {
@@ -422,6 +451,9 @@ io.on('connection', (socket) => {
             }
         }
         
+        // Check if user was previously special
+        const isSpecial = specialUsers.has(userId);
+        
         if (users.has(userId)) {
             const oldSocketId = users.get(userId).socketId;
             if (oldSocketId !== socket.id) {
@@ -430,14 +462,13 @@ io.on('connection', (socket) => {
             }
         }
         
-        const isAdmin = adminUsers.has(userId);
-        
         users.set(userId, {
             socketId: socket.id,
             name: name,
             profilePic: profilePic || null,
             deviceId: deviceId,
-            isAdmin: isAdmin
+            isSpecial: isSpecial,
+            specialBadge: isSpecial ? 'crown' : null
         });
         
         userNames.set(name, userId);
@@ -452,7 +483,8 @@ io.on('connection', (socket) => {
                     userId: key,
                     name: value.name,
                     profilePic: value.profilePic,
-                    isAdmin: adminUsers.has(key)
+                    isSpecial: value.isSpecial || false,
+                    specialBadge: value.specialBadge || null
                 });
             }
         });
@@ -463,9 +495,11 @@ io.on('connection', (socket) => {
             userId, 
             name, 
             profilePic: profilePic || null,
-            isAdmin: isAdmin
+            isSpecial: isSpecial,
+            specialBadge: isSpecial ? 'crown' : null
         });
         
+        // Deliver offline messages
         if (offlineMessages.has(userId)) {
             const messages = offlineMessages.get(userId);
             messages.forEach(msg => {
@@ -481,7 +515,7 @@ io.on('connection', (socket) => {
             console.log(`Delivered ${messages.length} offline messages to ${name}`);
         }
         
-        console.log(`✅ User ${name} (${userId}) logged in from device ${deviceId} ${isAdmin ? '👑' : ''}`);
+        console.log(`✅ User ${name} (${userId}) logged in from device ${deviceId} ${isSpecial ? '👑' : ''}`);
     });
 
     // ========== Profile picture update ==========
@@ -504,21 +538,14 @@ io.on('connection', (socket) => {
     socket.on('private-message', (data) => {
         const { toUserId, message, fromUserId, fromName, messageId, timestamp } = data;
         
-        // Check if recipient is blocked
-        if (blockedUsers.has(toUserId)) {
-            socket.emit('message-blocked', { messageId, reason: 'recipient blocked' });
-            return;
-        }
-        
-        // Store message for admin
-        messageStore.push({
-            messageId,
+        // Store in message history
+        messageHistory.push({
             fromUserId,
-            fromName,
             toUserId,
             message,
             timestamp,
-            type: 'text'
+            type: 'text',
+            messageId
         });
         
         if (users.has(toUserId)) {
@@ -541,7 +568,8 @@ io.on('connection', (socket) => {
                 fromName,
                 message,
                 timestamp,
-                messageId
+                messageId,
+                type: 'text'
             });
             
             console.log(`Message queued for offline user ${toUserId}`);
@@ -557,16 +585,14 @@ io.on('connection', (socket) => {
     socket.on('voice-message', (data) => {
         const { toUserId, audioUrl, fromUserId, fromName, duration, messageId, timestamp } = data;
         
-        // Store for admin
-        messageStore.push({
-            messageId,
+        messageHistory.push({
             fromUserId,
-            fromName,
             toUserId,
             audioUrl,
             duration,
             timestamp,
-            type: 'voice'
+            type: 'voice',
+            messageId
         });
         
         if (users.has(toUserId)) {
@@ -599,17 +625,15 @@ io.on('connection', (socket) => {
     socket.on('file-message', (data) => {
         const { toUserId, fileUrl, fileName, fileType, fromUserId, fromName, messageId, timestamp } = data;
         
-        // Store for admin
-        messageStore.push({
-            messageId,
+        messageHistory.push({
             fromUserId,
-            fromName,
             toUserId,
             fileUrl,
             fileName,
             fileType,
             timestamp,
-            type: 'file'
+            type: 'file',
+            messageId
         });
         
         if (users.has(toUserId)) {
@@ -644,15 +668,6 @@ io.on('connection', (socket) => {
     socket.on('delete-message', (data) => {
         const { messageId, toUserId, deleteType, fromUserId, timestamp } = data;
         
-        // Remove from message store
-        const msgIndex = messageStore.findIndex(m => m.messageId === messageId);
-        if (msgIndex !== -1) {
-            messageStore[msgIndex].deleted = true;
-            messageStore[msgIndex].deletedAt = timestamp;
-            messageStore[msgIndex].deletedBy = fromUserId;
-        }
-        
-        // Broadcast to both users if delete for everyone
         if (deleteType === 'for-everyone') {
             if (users.has(toUserId)) {
                 io.to(toUserId).emit('message-deleted', {
@@ -663,7 +678,6 @@ io.on('connection', (socket) => {
                 });
             }
             
-            // Also send back to sender for other devices
             io.to(fromUserId).emit('message-deleted', {
                 messageId,
                 deleteType,
@@ -672,9 +686,7 @@ io.on('connection', (socket) => {
             });
             
             console.log(`Message ${messageId} deleted for everyone`);
-        } 
-        // For delete for me, just send to sender's other devices
-        else if (deleteType === 'for-me') {
+        } else if (deleteType === 'for-me') {
             io.to(fromUserId).emit('message-deleted', {
                 messageId,
                 deleteType,
@@ -689,14 +701,6 @@ io.on('connection', (socket) => {
     // ========== Message read receipt ==========
     socket.on('message-read', (data) => {
         const { messageId, fromUserId, toUserId } = data;
-        
-        // Update in message store
-        const msg = messageStore.find(m => m.messageId === messageId);
-        if (msg) {
-            msg.read = true;
-            msg.readAt = new Date().toISOString();
-        }
-        
         io.to(fromUserId).emit('message-read', {
             messageId,
             fromUserId: toUserId
@@ -706,15 +710,6 @@ io.on('connection', (socket) => {
     // ========== All messages read ==========
     socket.on('messages-read', (data) => {
         const { toUserId, fromUserId } = data;
-        
-        // Mark all messages from this user as read
-        messageStore.forEach(msg => {
-            if (msg.fromUserId === fromUserId && msg.toUserId === toUserId) {
-                msg.read = true;
-                msg.readAt = new Date().toISOString();
-            }
-        });
-        
         io.to(toUserId).emit('messages-read', {
             fromUserId
         });
@@ -737,16 +732,6 @@ io.on('connection', (socket) => {
         const { toUserId, offer, callType } = data;
         const fromUser = users.get(socket.id);
         
-        // Log call for admin
-        callLogs.push({
-            caller: fromUser?.name || 'Unknown',
-            callerId: socket.id,
-            receiver: toUserId,
-            type: callType,
-            status: 'initiated',
-            timestamp: new Date().toISOString()
-        });
-        
         if (users.has(toUserId)) {
             io.to(toUserId).emit('call-offer', {
                 fromUserId: socket.id,
@@ -759,14 +744,6 @@ io.on('connection', (socket) => {
 
     socket.on('call-answer', (data) => {
         const { toUserId, answer } = data;
-        
-        // Update call log
-        const lastCall = callLogs[callLogs.length - 1];
-        if (lastCall) {
-            lastCall.status = 'answered';
-            lastCall.answeredAt = new Date().toISOString();
-        }
-        
         io.to(toUserId).emit('call-answer', { answer });
     });
 
@@ -777,30 +754,11 @@ io.on('connection', (socket) => {
 
     socket.on('call-end', (data) => {
         const { toUserId } = data;
-        
-        // Update call log with duration
-        const lastCall = callLogs[callLogs.length - 1];
-        if (lastCall && lastCall.status === 'answered') {
-            const endTime = new Date();
-            const startTime = new Date(lastCall.answeredAt);
-            lastCall.duration = Math.floor((endTime - startTime) / 1000);
-            lastCall.status = 'completed';
-        } else if (lastCall) {
-            lastCall.status = 'missed';
-        }
-        
         io.to(toUserId).emit('call-end');
     });
 
     socket.on('call-busy', (data) => {
         const { toUserId } = data;
-        
-        // Update call log
-        const lastCall = callLogs[callLogs.length - 1];
-        if (lastCall) {
-            lastCall.status = 'busy';
-        }
-        
         io.to(toUserId).emit('call-busy');
     });
 
@@ -844,7 +802,8 @@ io.on('connection', (socket) => {
             
             socket.broadcast.emit('user-offline', {
                 userId: disconnectedUserId,
-                name: disconnectedUser.name
+                name: disconnectedUser.name,
+                wasSpecial: disconnectedUser.isSpecial || false
             });
             
             console.log(`User ${disconnectedUser.name} disconnected`);
@@ -855,6 +814,6 @@ io.on('connection', (socket) => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`✅ HJH Chat app running on https://live-whats-chatting-production.up.railway.app`);
-    console.log(`✅ Admin API enabled with key: hjchat-admin-secret-key-2024`);
-    console.log(`✅ Admin panel available at: /admin`);
+    console.log(`✅ Admin panel: https://live-whats-chatting-production.up.railway.app/admin`);
+    console.log(`✅ Admin Key: ${ADMIN_KEY}`);
 });
