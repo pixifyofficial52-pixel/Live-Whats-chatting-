@@ -231,6 +231,7 @@
             font-size: 12px;
             border: 2px solid white;
             box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            z-index: 10;
         }
 
         .user-profile {
@@ -398,6 +399,7 @@
             font-size: 10px;
             border: 2px solid white;
             box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            z-index: 10;
         }
 
         .user-info {
@@ -426,6 +428,7 @@
             color: #f1c40f;
             font-size: 14px;
             margin-left: 5px;
+            display: inline-block;
         }
 
         .user-info p {
@@ -1827,9 +1830,5 @@
     <input type="file" id="file-input" style="display: none;" onchange="handleFileSelect(event)">
 
     <script src="script.js"></script>
-    <script>
-        // Popup completely removed as requested
-        console.log('App download popup removed');
-    </script>
 </body>
 </html>
