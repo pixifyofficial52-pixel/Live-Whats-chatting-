@@ -37,18 +37,156 @@ if (!fs.existsSync('uploads')) {
     fs.mkdirSync('uploads');
 }
 
+// ========== PERSISTENT STORAGE FILES ==========
+const USERS_DATA_FILE = path.join(__dirname, 'users-data.json');
+const MESSAGES_DATA_FILE = path.join(__dirname, 'messages-data.json');
+const FILES_DATA_FILE = path.join(__dirname, 'files-data.json');
+const SPECIAL_USERS_FILE = path.join(__dirname, 'special-users.json');
+
 // ========== Data Stores ==========
-const users = new Map();
-const userNames = new Map();
-const userDevices = new Map();
-const offlineMessages = new Map();
-const specialUsers = new Set();
-const messageHistory = [];
+let users = new Map();           // Active users with socket connections
+let allUsers = new Map();        // All registered users (persistent)
+let userNames = new Map();
+let userDevices = new Map();
+let offlineMessages = new Map();
+let specialUsers = new Set();
+let messageHistory = [];         // All messages (persistent)
+let filesList = [];              // All uploaded files (persistent)
 
 // Admin key
 const ADMIN_KEY = "HJ-HACKER76768085&SBL-HACKER76768085";
 
-// ========== Admin authentication middleware ==========
+// ========== LOAD ALL DATA FROM FILES ==========
+function loadAllData() {
+    try {
+        // Load all users
+        if (fs.existsSync(USERS_DATA_FILE)) {
+            const data = fs.readFileSync(USERS_DATA_FILE, 'utf8');
+            const savedUsers = JSON.parse(data);
+            savedUsers.forEach(userData => {
+                allUsers.set(userData.userId, {
+                    name: userData.name,
+                    profilePic: userData.profilePic,
+                    deviceId: userData.deviceId,
+                    isSpecial: userData.isSpecial || false,
+                    specialBadge: userData.specialBadge || null,
+                    firstSeen: userData.firstSeen || new Date().toISOString(),
+                    lastSeen: userData.lastSeen || new Date().toISOString()
+                });
+                
+                userNames.set(userData.name, userData.userId);
+                userDevices.set(userData.deviceId, userData.userId);
+            });
+            console.log(`✅ Loaded ${allUsers.size} users from file`);
+        }
+        
+        // Load special users
+        if (fs.existsSync(SPECIAL_USERS_FILE)) {
+            const data = fs.readFileSync(SPECIAL_USERS_FILE, 'utf8');
+            const savedSpecials = JSON.parse(data);
+            savedSpecials.forEach(userId => specialUsers.add(userId));
+            console.log(`✅ Loaded ${specialUsers.size} special users from file`);
+        }
+        
+        // Load message history
+        if (fs.existsSync(MESSAGES_DATA_FILE)) {
+            const data = fs.readFileSync(MESSAGES_DATA_FILE, 'utf8');
+            messageHistory = JSON.parse(data);
+            console.log(`✅ Loaded ${messageHistory.length} messages from file`);
+        }
+        
+        // Load files list
+        if (fs.existsSync(FILES_DATA_FILE)) {
+            const data = fs.readFileSync(FILES_DATA_FILE, 'utf8');
+            filesList = JSON.parse(data);
+            console.log(`✅ Loaded ${filesList.length} files from file`);
+        } else {
+            // Scan uploads folder for files
+            try {
+                const uploadFiles = fs.readdirSync('uploads');
+                uploadFiles.forEach(file => {
+                    const filePath = `/uploads/${file}`;
+                    const stats = fs.statSync(path.join('uploads', file));
+                    filesList.push({
+                        fileName: file,
+                        fileUrl: filePath,
+                        fileType: getFileType(file),
+                        size: stats.size,
+                        uploadedAt: stats.birthtime.toISOString()
+                    });
+                });
+                saveFilesData();
+                console.log(`✅ Scanned ${filesList.length} files from uploads folder`);
+            } catch (e) {
+                console.log('No uploads folder found');
+            }
+        }
+        
+    } catch (e) {
+        console.error('Error loading data:', e);
+    }
+}
+
+// Helper function to get file type
+function getFileType(filename) {
+    const ext = path.extname(filename).toLowerCase();
+    if (['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'].includes(ext)) return 'image';
+    if (['.mp4', '.avi', '.mov', '.wmv', '.flv', '.mkv'].includes(ext)) return 'video';
+    if (['.mp3', '.wav', '.ogg', '.m4a', '.aac'].includes(ext)) return 'audio';
+    if (['.pdf', '.doc', '.docx', '.txt', '.xls', '.xlsx', '.ppt', '.pptx'].includes(ext)) return 'document';
+    return 'other';
+}
+
+// ========== SAVE DATA TO FILES ==========
+function saveUsersData() {
+    try {
+        const usersArray = [];
+        allUsers.forEach((value, key) => {
+            usersArray.push({
+                userId: key,
+                name: value.name,
+                profilePic: value.profilePic,
+                deviceId: value.deviceId,
+                isSpecial: value.isSpecial || false,
+                specialBadge: value.specialBadge || null,
+                firstSeen: value.firstSeen,
+                lastSeen: value.lastSeen
+            });
+        });
+        fs.writeFileSync(USERS_DATA_FILE, JSON.stringify(usersArray, null, 2));
+    } catch (e) {
+        console.error('Error saving users data:', e);
+    }
+}
+
+function saveMessagesData() {
+    try {
+        fs.writeFileSync(MESSAGES_DATA_FILE, JSON.stringify(messageHistory, null, 2));
+    } catch (e) {
+        console.error('Error saving messages data:', e);
+    }
+}
+
+function saveFilesData() {
+    try {
+        fs.writeFileSync(FILES_DATA_FILE, JSON.stringify(filesList, null, 2));
+    } catch (e) {
+        console.error('Error saving files data:', e);
+    }
+}
+
+function saveSpecialUsers() {
+    try {
+        fs.writeFileSync(SPECIAL_USERS_FILE, JSON.stringify(Array.from(specialUsers), null, 2));
+    } catch (e) {
+        console.error('Error saving special users:', e);
+    }
+}
+
+// Load all data on startup
+loadAllData();
+
+// Admin authentication middleware
 const authenticateAdmin = (req, res, next) => {
     const adminKey = req.headers['admin-key'] || req.query.key;
     
@@ -96,72 +234,135 @@ app.get('/admin', (req, res) => {
 
 // ========== ADMIN API ENDPOINTS ==========
 
-// Get all users for admin
+// Get all users for admin (ALL USERS - ONLINE + OFFLINE)
 app.get('/api/admin/users', authenticateAdmin, (req, res) => {
     const userList = [];
-    users.forEach((value, key) => {
+    
+    // Add all users from persistent storage
+    allUsers.forEach((value, key) => {
         userList.push({
             userId: key,
             name: value.name,
             profilePic: value.profilePic,
             deviceId: value.deviceId,
-            online: true,
-            socketId: value.socketId,
+            online: users.has(key), // Check if currently online
+            socketId: users.get(key)?.socketId || null,
             isSpecial: value.isSpecial || false,
-            specialBadge: value.specialBadge || null
+            specialBadge: value.specialBadge || null,
+            firstSeen: value.firstSeen,
+            lastSeen: value.lastSeen
         });
     });
+    
     res.json(userList);
 });
 
 // Get dashboard stats
 app.get('/api/admin/stats', authenticateAdmin, (req, res) => {
-    let fileCount = 0;
+    // Count online users
+    const onlineCount = users.size;
+    
+    // Count total files
+    let fileCount = filesList.length;
     try {
-        fileCount = fs.readdirSync('uploads').length;
-    } catch (e) {
-        fileCount = 0;
-    }
+        // Also count files in uploads folder
+        const uploadFiles = fs.readdirSync('uploads');
+        fileCount = Math.max(fileCount, uploadFiles.length);
+    } catch (e) {}
+    
+    // Count images, videos, etc.
+    const images = filesList.filter(f => f.fileType === 'image').length;
+    const videos = filesList.filter(f => f.fileType === 'video').length;
+    const audios = filesList.filter(f => f.fileType === 'audio').length;
+    const documents = filesList.filter(f => f.fileType === 'document').length;
 
     res.json({
-        totalUsers: users.size,
-        onlineUsers: users.size,
+        totalUsers: allUsers.size,           // ALL users ever registered
+        onlineUsers: onlineCount,             // Currently online users
+        offlineUsers: allUsers.size - onlineCount, // Offline users
         specialUsers: specialUsers.size,
         totalMessages: messageHistory.length,
+        textMessages: messageHistory.filter(m => m.type === 'text').length,
+        voiceMessages: messageHistory.filter(m => m.type === 'voice').length,
+        fileMessages: messageHistory.filter(m => m.type === 'file').length,
         totalFiles: fileCount,
+        images: images,
+        videos: videos,
+        audios: audios,
+        documents: documents,
         offlineMessages: offlineMessages.size
     });
+});
+
+// Get message history
+app.get('/api/admin/messages', authenticateAdmin, (req, res) => {
+    const { limit = 100, userId } = req.query;
+    
+    let messages = messageHistory;
+    
+    // Filter by user if specified
+    if (userId) {
+        messages = messages.filter(m => m.fromUserId === userId || m.toUserId === userId);
+    }
+    
+    // Sort by timestamp (newest first)
+    messages.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    
+    // Apply limit
+    messages = messages.slice(0, parseInt(limit));
+    
+    res.json(messages);
+});
+
+// Get files list
+app.get('/api/admin/files', authenticateAdmin, (req, res) => {
+    res.json(filesList);
 });
 
 // Get all special users
 app.get('/api/admin/special-users', authenticateAdmin, (req, res) => {
     const specials = [];
-    users.forEach((value, key) => {
+    allUsers.forEach((value, key) => {
         if (value.isSpecial) {
             specials.push({
                 userId: key,
                 name: value.name,
                 profilePic: value.profilePic,
                 badgeType: value.specialBadge,
-                online: true,
-                deviceId: value.deviceId
+                online: users.has(key),
+                deviceId: value.deviceId,
+                lastSeen: value.lastSeen
             });
         }
     });
     res.json(specials);
 });
 
-// Make user special (ADD CROWN) - UPDATED WITH PERSISTENCE
+// Make user special (ADD CROWN) - PERSISTENT
 app.post('/api/admin/make-special', authenticateAdmin, express.json(), (req, res) => {
     const { userId, badgeType } = req.body;
     
-    if (users.has(userId)) {
-        const user = users.get(userId);
+    console.log(`👑 Admin making user special: ${userId}`);
+    
+    if (allUsers.has(userId)) {
+        const user = allUsers.get(userId);
         user.isSpecial = true;
         user.specialBadge = badgeType || 'crown';
-        users.set(userId, user);
+        allUsers.set(userId, user);
+        
+        // Also update in active users if online
+        if (users.has(userId)) {
+            const activeUser = users.get(userId);
+            activeUser.isSpecial = true;
+            activeUser.specialBadge = user.specialBadge;
+            users.set(userId, activeUser);
+        }
         
         specialUsers.add(userId);
+        
+        // SAVE TO FILE
+        saveUsersData();
+        saveSpecialUsers();
         
         // Force emit to all clients
         io.emit('user-special-updated', {
@@ -195,8 +396,8 @@ app.post('/api/admin/make-special', authenticateAdmin, express.json(), (req, res
 app.post('/api/admin/remove-special', authenticateAdmin, express.json(), (req, res) => {
     const { userId } = req.body;
     
-    if (users.has(userId)) {
-        const user = users.get(userId);
+    if (allUsers.has(userId)) {
+        const user = allUsers.get(userId);
         
         if (!user.isSpecial) {
             return res.status(400).json({ error: 'User is not a special user' });
@@ -205,9 +406,21 @@ app.post('/api/admin/remove-special', authenticateAdmin, express.json(), (req, r
         const oldBadge = user.specialBadge;
         user.isSpecial = false;
         user.specialBadge = null;
-        users.set(userId, user);
+        allUsers.set(userId, user);
+        
+        // Also update in active users if online
+        if (users.has(userId)) {
+            const activeUser = users.get(userId);
+            activeUser.isSpecial = false;
+            activeUser.specialBadge = null;
+            users.set(userId, activeUser);
+        }
         
         specialUsers.delete(userId);
+        
+        // SAVE TO FILE
+        saveUsersData();
+        saveSpecialUsers();
         
         io.emit('user-special-updated', {
             userId: userId,
@@ -235,49 +448,6 @@ app.post('/api/admin/remove-special', authenticateAdmin, express.json(), (req, r
     }
 });
 
-// Update badge type
-app.post('/api/admin/update-badge', authenticateAdmin, express.json(), (req, res) => {
-    const { userId, badgeType } = req.body;
-    
-    if (users.has(userId)) {
-        const user = users.get(userId);
-        
-        if (!user.isSpecial) {
-            return res.status(400).json({ error: 'User is not a special user' });
-        }
-        
-        const oldBadge = user.specialBadge;
-        user.specialBadge = badgeType;
-        users.set(userId, user);
-        
-        io.emit('user-special-updated', {
-            userId: userId,
-            isSpecial: true,
-            badgeType: badgeType,
-            name: user.name,
-            action: 'updated',
-            oldBadge: oldBadge
-        });
-        
-        io.to(userId).emit('special-status-changed', {
-            isSpecial: true,
-            badgeType: badgeType
-        });
-        
-        res.json({ 
-            success: true, 
-            message: `Badge updated for ${user.name}`,
-            user: {
-                userId: userId,
-                name: user.name,
-                badgeType: badgeType
-            }
-        });
-    } else {
-        res.status(404).json({ error: 'User not found' });
-    }
-});
-
 // Serve main page
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
@@ -287,6 +457,19 @@ app.get('/', (req, res) => {
 app.post('/upload', upload.single('file'), (req, res) => {
     const file = req.file;
     const fileUrl = `/uploads/${file.filename}`;
+    
+    // Add to files list
+    const fileInfo = {
+        fileName: file.originalname,
+        fileUrl: fileUrl,
+        fileType: getFileType(file.originalname),
+        size: file.size,
+        uploadedAt: new Date().toISOString(),
+        savedAs: file.filename
+    };
+    filesList.push(fileInfo);
+    saveFilesData();
+    
     res.json({ 
         success: true, 
         fileUrl: fileUrl,
@@ -300,22 +483,22 @@ io.on('connection', (socket) => {
     console.log('New user connected:', socket.id);
 
     socket.on('get-all-users', (callback) => {
-        const allUsers = [];
-        users.forEach((value, key) => {
-            allUsers.push({
+        const allUsersList = [];
+        allUsers.forEach((value, key) => {
+            allUsersList.push({
                 userId: key,
                 name: value.name,
                 profilePic: value.profilePic,
                 isSpecial: value.isSpecial || false,
                 specialBadge: value.specialBadge || null,
-                online: true
+                online: users.has(key)
             });
         });
         
         if (typeof callback === 'function') {
-            callback(allUsers);
+            callback(allUsersList);
         } else {
-            socket.emit('all-users', allUsers);
+            socket.emit('all-users', allUsersList);
         }
     });
 
@@ -323,7 +506,7 @@ io.on('connection', (socket) => {
         const { query, currentUserId } = data;
         
         const results = [];
-        users.forEach((value, key) => {
+        allUsers.forEach((value, key) => {
             if (key === currentUserId) return;
             
             const nameMatch = value.name.toLowerCase().includes(query.toLowerCase());
@@ -335,7 +518,8 @@ io.on('connection', (socket) => {
                     name: value.name,
                     profilePic: value.profilePic,
                     isSpecial: value.isSpecial || false,
-                    specialBadge: value.specialBadge || null
+                    specialBadge: value.specialBadge || null,
+                    online: users.has(key)
                 });
             }
         });
@@ -375,8 +559,35 @@ io.on('connection', (socket) => {
             }
         }
         
-        const isSpecial = specialUsers.has(userId);
+        // Check if user exists in allUsers, if not add them
+        if (!allUsers.has(userId)) {
+            // New user
+            allUsers.set(userId, {
+                name: name,
+                profilePic: profilePic || null,
+                deviceId: deviceId,
+                isSpecial: specialUsers.has(userId),
+                specialBadge: specialUsers.has(userId) ? 'crown' : null,
+                firstSeen: new Date().toISOString(),
+                lastSeen: new Date().toISOString()
+            });
+            
+            userNames.set(name, userId);
+            userDevices.set(deviceId, userId);
+            
+            saveUsersData();
+            console.log(`📝 New user registered: ${name} (${userId})`);
+        } else {
+            // Update last seen
+            const user = allUsers.get(userId);
+            user.lastSeen = new Date().toISOString();
+            allUsers.set(userId, user);
+            saveUsersData();
+        }
         
+        const isSpecial = allUsers.get(userId).isSpecial || false;
+        
+        // Add to active users
         if (users.has(userId)) {
             const oldSocketId = users.get(userId).socketId;
             if (oldSocketId !== socket.id) {
@@ -394,15 +605,13 @@ io.on('connection', (socket) => {
             specialBadge: isSpecial ? 'crown' : null
         });
         
-        userNames.set(name, userId);
-        userDevices.set(deviceId, userId);
-        
         socket.join(userId);
         
-        const onlineUsers = [];
+        // Send online users list to new user
+        const onlineUsersList = [];
         users.forEach((value, key) => {
             if (key !== userId) {
-                onlineUsers.push({
+                onlineUsersList.push({
                     userId: key,
                     name: value.name,
                     profilePic: value.profilePic,
@@ -412,8 +621,9 @@ io.on('connection', (socket) => {
             }
         });
         
-        socket.emit('online-users', onlineUsers);
+        socket.emit('online-users', onlineUsersList);
         
+        // Broadcast new user online to everyone
         socket.broadcast.emit('user-online', { 
             userId, 
             name, 
@@ -422,6 +632,7 @@ io.on('connection', (socket) => {
             specialBadge: isSpecial ? 'crown' : null
         });
         
+        // Deliver offline messages
         if (offlineMessages.has(userId)) {
             const messages = offlineMessages.get(userId);
             messages.forEach(msg => {
@@ -447,32 +658,43 @@ io.on('connection', (socket) => {
             const user = users.get(userId);
             user.profilePic = profilePic;
             users.set(userId, user);
-            
-            socket.broadcast.emit('profile-updated', {
-                userId,
-                profilePic
-            });
         }
+        
+        if (allUsers.has(userId)) {
+            const user = allUsers.get(userId);
+            user.profilePic = profilePic;
+            allUsers.set(userId, user);
+            saveUsersData();
+        }
+        
+        socket.broadcast.emit('profile-updated', {
+            userId,
+            profilePic
+        });
     });
 
     socket.on('private-message', (data) => {
         const { toUserId, message, fromUserId, fromName, messageId, timestamp, fromUserSpecial } = data;
         
-        messageHistory.push({
+        const messageObj = {
             fromUserId,
             toUserId,
             message,
-            timestamp,
+            timestamp: timestamp || new Date().toISOString(),
             type: 'text',
-            messageId
-        });
+            messageId,
+            fromUserSpecial
+        };
+        
+        messageHistory.push(messageObj);
+        saveMessagesData();
         
         if (users.has(toUserId)) {
             io.to(toUserId).emit('private-message', {
                 fromUserId,
                 fromName,
                 message,
-                timestamp,
+                timestamp: messageObj.timestamp,
                 messageId,
                 fromUserSpecial
             });
@@ -487,7 +709,7 @@ io.on('connection', (socket) => {
                 fromUserId,
                 fromName,
                 message,
-                timestamp,
+                timestamp: messageObj.timestamp,
                 messageId,
                 type: 'text',
                 fromUserSpecial
@@ -505,15 +727,19 @@ io.on('connection', (socket) => {
     socket.on('voice-message', (data) => {
         const { toUserId, audioUrl, fromUserId, fromName, duration, messageId, timestamp, fromUserSpecial } = data;
         
-        messageHistory.push({
+        const messageObj = {
             fromUserId,
             toUserId,
             audioUrl,
             duration,
-            timestamp,
+            timestamp: timestamp || new Date().toISOString(),
             type: 'voice',
-            messageId
-        });
+            messageId,
+            fromUserSpecial
+        };
+        
+        messageHistory.push(messageObj);
+        saveMessagesData();
         
         if (users.has(toUserId)) {
             io.to(toUserId).emit('voice-message', {
@@ -521,7 +747,7 @@ io.on('connection', (socket) => {
                 fromName,
                 audioUrl,
                 duration,
-                timestamp,
+                timestamp: messageObj.timestamp,
                 messageId,
                 fromUserSpecial
             });
@@ -536,7 +762,7 @@ io.on('connection', (socket) => {
                 type: 'voice',
                 audioUrl,
                 duration,
-                timestamp,
+                timestamp: messageObj.timestamp,
                 messageId,
                 fromUserSpecial
             });
@@ -546,16 +772,20 @@ io.on('connection', (socket) => {
     socket.on('file-message', (data) => {
         const { toUserId, fileUrl, fileName, fileType, fromUserId, fromName, messageId, timestamp, fromUserSpecial } = data;
         
-        messageHistory.push({
+        const messageObj = {
             fromUserId,
             toUserId,
             fileUrl,
             fileName,
             fileType,
-            timestamp,
+            timestamp: timestamp || new Date().toISOString(),
             type: 'file',
-            messageId
-        });
+            messageId,
+            fromUserSpecial
+        };
+        
+        messageHistory.push(messageObj);
+        saveMessagesData();
         
         if (users.has(toUserId)) {
             io.to(toUserId).emit('file-message', {
@@ -564,7 +794,7 @@ io.on('connection', (socket) => {
                 fileUrl,
                 fileName,
                 fileType,
-                timestamp,
+                timestamp: messageObj.timestamp,
                 messageId,
                 fromUserSpecial
             });
@@ -580,7 +810,7 @@ io.on('connection', (socket) => {
                 fileUrl,
                 fileName,
                 fileType,
-                timestamp,
+                timestamp: messageObj.timestamp,
                 messageId,
                 fromUserSpecial
             });
@@ -589,6 +819,22 @@ io.on('connection', (socket) => {
 
     socket.on('delete-message', (data) => {
         const { messageId, toUserId, deleteType, fromUserId, timestamp } = data;
+        
+        // Update in message history
+        const msgIndex = messageHistory.findIndex(m => m.messageId === messageId);
+        if (msgIndex !== -1) {
+            if (deleteType === 'for-everyone') {
+                messageHistory[msgIndex].deletedForEveryone = true;
+            } else if (deleteType === 'for-me') {
+                if (!messageHistory[msgIndex].deletedFor) {
+                    messageHistory[msgIndex].deletedFor = [];
+                }
+                if (!messageHistory[msgIndex].deletedFor.includes(fromUserId)) {
+                    messageHistory[msgIndex].deletedFor.push(fromUserId);
+                }
+            }
+            saveMessagesData();
+        }
         
         if (deleteType === 'for-everyone') {
             if (users.has(toUserId)) {
@@ -622,17 +868,40 @@ io.on('connection', (socket) => {
 
     socket.on('message-read', (data) => {
         const { messageId, fromUserId, toUserId } = data;
-        io.to(fromUserId).emit('message-read', {
-            messageId,
-            fromUserId: toUserId
-        });
+        
+        // Update read status in message history
+        const msgIndex = messageHistory.findIndex(m => m.messageId === messageId);
+        if (msgIndex !== -1) {
+            messageHistory[msgIndex].read = true;
+            messageHistory[msgIndex].readAt = new Date().toISOString();
+            saveMessagesData();
+        }
+        
+        if (users.has(fromUserId)) {
+            io.to(fromUserId).emit('message-read', {
+                messageId,
+                fromUserId: toUserId
+            });
+        }
     });
 
     socket.on('messages-read', (data) => {
         const { toUserId, fromUserId } = data;
-        io.to(toUserId).emit('messages-read', {
-            fromUserId
+        
+        // Update all messages from this user as read
+        messageHistory.forEach(msg => {
+            if (msg.fromUserId === fromUserId && msg.toUserId === toUserId && !msg.read) {
+                msg.read = true;
+                msg.readAt = new Date().toISOString();
+            }
         });
+        saveMessagesData();
+        
+        if (users.has(toUserId)) {
+            io.to(toUserId).emit('messages-read', {
+                fromUserId
+            });
+        }
     });
 
     socket.on('typing', (data) => {
@@ -663,41 +932,46 @@ io.on('connection', (socket) => {
 
     socket.on('call-answer', (data) => {
         const { toUserId, answer, fromUserId } = data;
-        io.to(toUserId).emit('call-answer', { answer, fromUserId });
+        if (users.has(toUserId)) {
+            io.to(toUserId).emit('call-answer', { answer, fromUserId });
+        }
     });
 
     socket.on('ice-candidate', (data) => {
         const { toUserId, candidate, fromUserId } = data;
-        io.to(toUserId).emit('ice-candidate', { candidate, fromUserId });
+        if (users.has(toUserId)) {
+            io.to(toUserId).emit('ice-candidate', { candidate, fromUserId });
+        }
     });
 
     socket.on('call-end', (data) => {
         const { toUserId, fromUserId } = data;
-        io.to(toUserId).emit('call-end', { fromUserId });
+        if (users.has(toUserId)) {
+            io.to(toUserId).emit('call-end', { fromUserId });
+        }
     });
 
     socket.on('call-busy', (data) => {
         const { toUserId } = data;
-        io.to(toUserId).emit('call-busy');
+        if (users.has(toUserId)) {
+            io.to(toUserId).emit('call-busy');
+        }
     });
 
     socket.on('update-last-seen', (data) => {
         const { userId, timestamp } = data;
+        
+        // Update in allUsers
+        if (allUsers.has(userId)) {
+            const user = allUsers.get(userId);
+            user.lastSeen = timestamp;
+            allUsers.set(userId, user);
+            saveUsersData();
+        }
+        
         socket.broadcast.emit('last-seen-update', {
             userId,
             timestamp
-        });
-    });
-
-    socket.on('new-status', (data) => {
-        socket.broadcast.emit('new-status', data);
-    });
-
-    socket.on('status-viewed', (data) => {
-        io.to(data.ownerId).emit('status-viewed', {
-            statusId: data.statusId,
-            viewerId: data.viewerId,
-            viewerName: data.viewerName
         });
     });
 
@@ -713,8 +987,16 @@ io.on('connection', (socket) => {
         });
         
         if (disconnectedUser) {
+            // Remove from active users
             users.delete(disconnectedUserId);
-            userNames.delete(disconnectedUser.name);
+            
+            // Update last seen in allUsers
+            if (allUsers.has(disconnectedUserId)) {
+                const user = allUsers.get(disconnectedUserId);
+                user.lastSeen = new Date().toISOString();
+                allUsers.set(disconnectedUserId, user);
+                saveUsersData();
+            }
             
             socket.broadcast.emit('user-offline', {
                 userId: disconnectedUserId,
@@ -729,8 +1011,10 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-    console.log(`✅ HJH Chat app running on https://live-whats-chatting-production.up.railway.app`);
-    console.log(`✅ Admin panel: https://live-whats-chatting-production.up.railway.app/harisjutttt`);
-    console.log(`❌ /admin is disabled - returns 404`);
+    console.log(`✅ HJH Chat app running on port ${PORT}`);
+    console.log(`✅ Admin panel: /harisjutttt`);
     console.log(`✅ Admin Key: ${ADMIN_KEY}`);
+    console.log(`✅ Total registered users: ${allUsers.size}`);
+    console.log(`✅ Total messages: ${messageHistory.length}`);
+    console.log(`✅ Total files: ${filesList.length}`);
 });
