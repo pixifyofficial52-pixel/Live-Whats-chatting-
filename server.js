@@ -361,6 +361,121 @@ io.on('connection', (socket) => {
         }
     });
 
+    socket.on('voice-message', (data) => {
+        const { toUserId, audioUrl, fromUserId, fromName, duration, messageId, timestamp } = data;
+        messageStore.push({ messageId, fromUserId, fromName, toUserId, audioUrl, duration, timestamp, type: 'voice' });
+        if (users.has(toUserId)) {
+            io.to(toUserId).emit('voice-message', { fromUserId, fromName, audioUrl, duration, timestamp, messageId });
+        } else {
+            if (!offlineMessages.has(toUserId)) offlineMessages.set(toUserId, []);
+            offlineMessages.get(toUserId).push({ fromUserId, fromName, type: 'voice', audioUrl, duration, timestamp, messageId });
+        }
+    });
+
+    socket.on('file-message', (data) => {
+        const { toUserId, fileUrl, fileName, fileType, fromUserId, fromName, messageId, timestamp } = data;
+        messageStore.push({ messageId, fromUserId, fromName, toUserId, fileUrl, fileName, fileType, timestamp, type: 'file' });
+        if (users.has(toUserId)) {
+            io.to(toUserId).emit('file-message', { fromUserId, fromName, fileUrl, fileName, fileType, timestamp, messageId });
+        } else {
+            if (!offlineMessages.has(toUserId)) offlineMessages.set(toUserId, []);
+            offlineMessages.get(toUserId).push({ fromUserId, fromName, type: 'file', fileUrl, fileName, fileType, timestamp, messageId });
+        }
+    });
+
+    socket.on('delete-message', (data) => {
+        const { messageId, toUserId, deleteType, fromUserId, timestamp } = data;
+        if (deleteType === 'for-everyone') {
+            if (users.has(toUserId)) {
+                io.to(toUserId).emit('message-deleted', { messageId, deleteType, fromUserId, timestamp });
+            }
+            io.to(fromUserId).emit('message-deleted', { messageId, deleteType, fromUserId, timestamp });
+        } else if (deleteType === 'for-me') {
+            io.to(fromUserId).emit('message-deleted', { messageId, deleteType, fromUserId, timestamp });
+        }
+    });
+
+    socket.on('message-read', (data) => {
+        const { messageId, fromUserId, toUserId } = data;
+        io.to(fromUserId).emit('message-read', { messageId, fromUserId: toUserId });
+    });
+
+    socket.on('messages-read', (data) => {
+        const { toUserId, fromUserId } = data;
+        io.to(toUserId).emit('messages-read', { fromUserId });
+    });
+
+    socket.on('typing', (data) => {
+        const { toUserId, fromUserId, isTyping } = data;
+        if (users.has(toUserId)) {
+            io.to(toUserId).emit('typing-indicator', { fromUserId, isTyping });
+        }
+    });
+
+    socket.on('call-offer', (data) => {
+        const { toUserId, offer, callType } = data;
+        const fromUser = users.get(socket.id);
+        callLogs.push({
+            caller: fromUser?.name || 'Unknown',
+            callerId: socket.id,
+            receiver: toUserId,
+            type: callType,
+            status: 'initiated',
+            timestamp: new Date().toISOString()
+        });
+        if (users.has(toUserId)) {
+            io.to(toUserId).emit('call-offer', {
+                fromUserId: socket.id,
+                fromName: fromUser?.name,
+                offer,
+                callType
+            });
+        }
+    });
+
+    socket.on('call-answer', (data) => {
+        const { toUserId, answer } = data;
+        const lastCall = callLogs[callLogs.length - 1];
+        if (lastCall) {
+            lastCall.status = 'answered';
+            lastCall.answeredAt = new Date().toISOString();
+        }
+        io.to(toUserId).emit('call-answer', { answer });
+    });
+
+    socket.on('ice-candidate', (data) => {
+        const { toUserId, candidate } = data;
+        io.to(toUserId).emit('ice-candidate', { candidate });
+    });
+
+    socket.on('call-end', (data) => {
+        const { toUserId } = data;
+        const lastCall = callLogs[callLogs.length - 1];
+        if (lastCall && lastCall.status === 'answered') {
+            const endTime = new Date();
+            const startTime = new Date(lastCall.answeredAt);
+            lastCall.duration = Math.floor((endTime - startTime) / 1000);
+            lastCall.status = 'completed';
+        } else if (lastCall) {
+            lastCall.status = 'missed';
+        }
+        io.to(toUserId).emit('call-end');
+    });
+
+    socket.on('call-busy', (data) => {
+        const { toUserId } = data;
+        const lastCall = callLogs[callLogs.length - 1];
+        if (lastCall) {
+            lastCall.status = 'busy';
+        }
+        io.to(toUserId).emit('call-busy');
+    });
+
+    socket.on('update-last-seen', (data) => {
+        const { userId, timestamp } = data;
+        socket.broadcast.emit('last-seen-update', { userId, timestamp });
+    });
+
     socket.on('disconnect', () => {
         let disconnectedUser = null;
         let disconnectedUserId = null;
