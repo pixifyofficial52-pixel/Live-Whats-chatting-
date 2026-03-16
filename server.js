@@ -5,6 +5,7 @@ const cors = require('cors');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const session = require('express-session');
 
 const app = express();
 
@@ -20,6 +21,17 @@ app.use(cors({
     credentials: true
 }));
 
+// ========== Session for admin login ==========
+app.use(session({
+    secret: 'hj-hacker-super-secret-key-2026',
+    resave: false,
+    saveUninitialized: false,
+    cookie: { 
+        secure: process.env.NODE_ENV === 'production',
+        maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    }
+}));
+
 // ========== Force HTTPS redirect ==========
 app.use((req, res, next) => {
     if (req.headers['x-forwarded-proto'] !== 'https' && process.env.NODE_ENV === 'production') {
@@ -31,6 +43,8 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname)));
 app.use('/uploads', express.static('uploads'));
 app.use('/admin', express.static(path.join(__dirname, 'admin')));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Create uploads folder if not exists
 if (!fs.existsSync('uploads')) {
@@ -70,12 +84,44 @@ function writeUsersToFile(usersData) {
     }
 }
 
+// ========== Admin Login API ==========
+const ADMIN_ACCESS_KEY = "HJ-HACKER76768085&SBL-HACKER76768085"; // Secret key
+
+app.post('/admin/login', (req, res) => {
+    const { accessKey } = req.body;
+    
+    if (accessKey === ADMIN_ACCESS_KEY) {
+        req.session.isAdmin = true;
+        res.json({ success: true, message: 'Login successful' });
+    } else {
+        res.status(401).json({ success: false, message: 'Invalid access key' });
+    }
+});
+
+app.get('/admin/check-auth', (req, res) => {
+    res.json({ isAuthenticated: req.session.isAdmin || false });
+});
+
+app.post('/admin/logout', (req, res) => {
+    req.session.destroy();
+    res.json({ success: true });
+});
+
+// Admin middleware
+function requireAdmin(req, res, next) {
+    if (req.session.isAdmin) {
+        next();
+    } else {
+        res.status(401).sendFile(path.join(__dirname, 'admin', 'login.html'));
+    }
+}
+
 // ========== Admin API endpoints ==========
-app.get('/admin', (req, res) => {
+app.get('/admin', requireAdmin, (req, res) => {
     res.sendFile(path.join(__dirname, 'admin', 'index.html'));
 });
 
-app.get('/admin/users', (req, res) => {
+app.get('/admin/users', requireAdmin, (req, res) => {
     const usersData = readUsersFromFile();
     res.json(usersData);
 });
@@ -582,4 +628,5 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`✅ HJH Chat app running on https://live-whats-chatting-production.up.railway.app`);
     console.log(`✅ Admin panel available at: https://live-whats-chatting-production.up.railway.app/admin`);
+    console.log(`🔐 Admin Access Key is HIDDEN for security`);
 });
