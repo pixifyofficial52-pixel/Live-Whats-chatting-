@@ -30,11 +30,55 @@ app.use((req, res, next) => {
 
 app.use(express.static(path.join(__dirname)));
 app.use('/uploads', express.static('uploads'));
+app.use('/admin', express.static(path.join(__dirname, 'admin')));
 
 // Create uploads folder if not exists
 if (!fs.existsSync('uploads')) {
     fs.mkdirSync('uploads');
 }
+
+// Create admin folder if not exists
+if (!fs.existsSync('admin')) {
+    fs.mkdirSync('admin');
+}
+
+// Create users.json file to store permanent user records
+const USERS_DB_FILE = path.join(__dirname, 'admin', 'users.json');
+if (!fs.existsSync(USERS_DB_FILE)) {
+    fs.writeFileSync(USERS_DB_FILE, JSON.stringify({ users: [] }, null, 2));
+}
+
+// Helper function to read users from file
+function readUsersFromFile() {
+    try {
+        const data = fs.readFileSync(USERS_DB_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (error) {
+        console.error('Error reading users file:', error);
+        return { users: [] };
+    }
+}
+
+// Helper function to write users to file
+function writeUsersToFile(usersData) {
+    try {
+        fs.writeFileSync(USERS_DB_FILE, JSON.stringify(usersData, null, 2));
+        return true;
+    } catch (error) {
+        console.error('Error writing users file:', error);
+        return false;
+    }
+}
+
+// ========== Admin API endpoints ==========
+app.get('/admin', (req, res) => {
+    res.sendFile(path.join(__dirname, 'admin', 'index.html'));
+});
+
+app.get('/admin/users', (req, res) => {
+    const usersData = readUsersFromFile();
+    res.json(usersData);
+});
 
 // File upload setup
 const storage = multer.diskStorage({
@@ -86,6 +130,17 @@ app.post('/upload', upload.single('file'), (req, res) => {
 
 io.on('connection', (socket) => {
     console.log('New user connected:', socket.id);
+
+    // Send online users list to admin panel
+    const onlineUsersList = [];
+    users.forEach((value, key) => {
+        onlineUsersList.push({
+            userId: key,
+            name: value.name,
+            profilePic: value.profilePic
+        });
+    });
+    socket.emit('online-users-list', onlineUsersList);
 
     // ========== Get all users for search ==========
     socket.on('get-all-users', () => {
@@ -177,6 +232,35 @@ io.on('connection', (socket) => {
         
         socket.join(userId);
         
+        // ========== Save user to permanent storage ==========
+        const usersData = readUsersFromFile();
+        const existingUserIndex = usersData.users.findIndex(u => u.userId === userId);
+        
+        const userRecord = {
+            userId,
+            name,
+            profilePic: profilePic || null,
+            deviceId,
+            lastSeen: new Date().toISOString()
+        };
+        
+        if (existingUserIndex === -1) {
+            // New user
+            userRecord.firstSeen = new Date().toISOString();
+            usersData.users.push(userRecord);
+            console.log(`✅ New user permanently saved: ${name} (${userId})`);
+        } else {
+            // Update existing user
+            usersData.users[existingUserIndex] = {
+                ...usersData.users[existingUserIndex],
+                ...userRecord,
+                firstSeen: usersData.users[existingUserIndex].firstSeen || new Date().toISOString()
+            };
+            console.log(`✅ Existing user updated: ${name} (${userId})`);
+        }
+        
+        writeUsersToFile(usersData);
+        
         const onlineUsers = [];
         users.forEach((value, key) => {
             if (key !== userId) {
@@ -222,6 +306,14 @@ io.on('connection', (socket) => {
             const user = users.get(userId);
             user.profilePic = profilePic;
             users.set(userId, user);
+            
+            // Update in permanent storage
+            const usersData = readUsersFromFile();
+            const userIndex = usersData.users.findIndex(u => u.userId === userId);
+            if (userIndex !== -1) {
+                usersData.users[userIndex].profilePic = profilePic;
+                writeUsersToFile(usersData);
+            }
             
             socket.broadcast.emit('profile-updated', {
                 userId,
@@ -328,11 +420,10 @@ io.on('connection', (socket) => {
         }
     });
 
-    // ========== NEW: Delete message handler ==========
+    // ========== Delete message handler ==========
     socket.on('delete-message', (data) => {
         const { messageId, toUserId, deleteType, fromUserId, timestamp } = data;
         
-        // Broadcast to both users if delete for everyone
         if (deleteType === 'for-everyone') {
             if (users.has(toUserId)) {
                 io.to(toUserId).emit('message-deleted', {
@@ -342,26 +433,20 @@ io.on('connection', (socket) => {
                     timestamp
                 });
             }
-            
-            // Also send back to sender for other devices
             io.to(fromUserId).emit('message-deleted', {
                 messageId,
                 deleteType,
                 fromUserId,
                 timestamp
             });
-            
             console.log(`Message ${messageId} deleted for everyone`);
-        } 
-        // For delete for me, just send to sender's other devices
-        else if (deleteType === 'for-me') {
+        } else if (deleteType === 'for-me') {
             io.to(fromUserId).emit('message-deleted', {
                 messageId,
                 deleteType,
                 fromUserId,
                 timestamp
             });
-            
             console.log(`Message ${messageId} deleted for user ${fromUserId}`);
         }
     });
@@ -433,6 +518,14 @@ io.on('connection', (socket) => {
     // ========== Last seen update ==========
     socket.on('update-last-seen', (data) => {
         const { userId, timestamp } = data;
+        
+        const usersData = readUsersFromFile();
+        const userIndex = usersData.users.findIndex(u => u.userId === userId);
+        if (userIndex !== -1) {
+            usersData.users[userIndex].lastSeen = new Date(timestamp).toISOString();
+            writeUsersToFile(usersData);
+        }
+        
         socket.broadcast.emit('last-seen-update', {
             userId,
             timestamp
@@ -468,6 +561,13 @@ io.on('connection', (socket) => {
             users.delete(disconnectedUserId);
             userNames.delete(disconnectedUser.name);
             
+            const usersData = readUsersFromFile();
+            const userIndex = usersData.users.findIndex(u => u.userId === disconnectedUserId);
+            if (userIndex !== -1) {
+                usersData.users[userIndex].lastSeen = new Date().toISOString();
+                writeUsersToFile(usersData);
+            }
+            
             socket.broadcast.emit('user-offline', {
                 userId: disconnectedUserId,
                 name: disconnectedUser.name
@@ -481,4 +581,5 @@ io.on('connection', (socket) => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`✅ HJH Chat app running on https://live-whats-chatting-production.up.railway.app`);
+    console.log(`✅ Admin panel available at: https://live-whats-chatting-production.up.railway.app/admin`);
 });
