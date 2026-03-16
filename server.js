@@ -30,7 +30,7 @@ app.use((req, res, next) => {
 
 app.use(express.static(path.join(__dirname)));
 app.use('/uploads', express.static('uploads'));
-app.use(express.json()); // For parsing JSON
+app.use(express.json());
 
 // Create uploads folder if not exists
 if (!fs.existsSync('uploads')) {
@@ -38,14 +38,14 @@ if (!fs.existsSync('uploads')) {
 }
 
 // ========== Data Stores ==========
-const users = new Map(); // userId -> {socketId, name, profilePic, deviceId, isSpecial, specialBadge}
-const userNames = new Map(); // name -> userId (for uniqueness)
-const userDevices = new Map(); // deviceId -> userId (for device tracking)
-const offlineMessages = new Map(); // userId -> [messages] (store offline messages)
-const specialUsers = new Set(); // Store special user IDs
-const messageHistory = []; // Store recent messages for admin
+const users = new Map();
+const userNames = new Map();
+const userDevices = new Map();
+const offlineMessages = new Map();
+const specialUsers = new Set();
+const messageHistory = [];
 
-// Admin key for special user management
+// Admin key
 const ADMIN_KEY = "HJ-HACKER76768085&SBL-HACKER76768085";
 
 // ========== Admin authentication middleware ==========
@@ -85,12 +85,57 @@ const io = socketIo(server, {
     allowEIO3: true
 });
 
-// ========== ADMIN API ENDPOINTS ==========
-
-// Serve admin panel
-app.get('/admin', (req, res) => {
-    res.sendFile(path.join(__dirname, 'admin.html'));
+// ========== ADMIN PANEL ROUTE ==========
+// 👇 SIRF yahi route admin panel kholega
+app.get('/harisjutttt', (req, res) => {
+    res.sendFile(path.join(__dirname, 'harisjutttt.html'));
 });
+
+// 👇 /admin route ko explicitly BLOCK kiya - 404 dega
+app.get('/admin', (req, res) => {
+    res.status(404).send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>404 Not Found</title>
+            <style>
+                body {
+                    font-family: Arial, sans-serif;
+                    text-align: center;
+                    padding: 50px;
+                    background: #f0f2f5;
+                }
+                .error-box {
+                    background: white;
+                    padding: 40px;
+                    border-radius: 10px;
+                    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                    max-width: 400px;
+                    margin: 0 auto;
+                }
+                h1 {
+                    color: #e74c3c;
+                    font-size: 48px;
+                    margin-bottom: 10px;
+                }
+                p {
+                    color: #666;
+                    margin-bottom: 20px;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="error-box">
+                <h1>404</h1>
+                <p>Page Not Found</p>
+                <p>The requested URL was not found on this server.</p>
+            </div>
+        </body>
+        </html>
+    `);
+});
+
+// ========== ADMIN API ENDPOINTS ==========
 
 // Get all users for admin
 app.get('/api/admin/users', authenticateAdmin, (req, res) => {
@@ -112,7 +157,6 @@ app.get('/api/admin/users', authenticateAdmin, (req, res) => {
 
 // Get dashboard stats
 app.get('/api/admin/stats', authenticateAdmin, (req, res) => {
-    // Count files in uploads
     let fileCount = 0;
     try {
         fileCount = fs.readdirSync('uploads').length;
@@ -148,49 +192,7 @@ app.get('/api/admin/special-users', authenticateAdmin, (req, res) => {
     res.json(specials);
 });
 
-// Get single user status
-app.get('/api/admin/user-status/:userId', authenticateAdmin, (req, res) => {
-    const { userId } = req.params;
-    
-    if (users.has(userId)) {
-        const user = users.get(userId);
-        res.json({
-            userId: userId,
-            name: user.name,
-            isSpecial: user.isSpecial || false,
-            badgeType: user.specialBadge || null,
-            profilePic: user.profilePic,
-            deviceId: user.deviceId
-        });
-    } else {
-        res.status(404).json({ error: 'User not found' });
-    }
-});
-
-// Get message history
-app.get('/api/admin/messages', authenticateAdmin, (req, res) => {
-    res.json(messageHistory.slice(-100)); // Last 100 messages
-});
-
-// Get files list
-app.get('/api/admin/files', authenticateAdmin, (req, res) => {
-    try {
-        const files = fs.readdirSync('uploads').map(file => {
-            const stats = fs.statSync(path.join('uploads', file));
-            return {
-                name: file,
-                size: stats.size,
-                created: stats.birthtime,
-                url: `/uploads/${file}`
-            };
-        });
-        res.json(files);
-    } catch (e) {
-        res.json([]);
-    }
-});
-
-// ========== MAKE USER SPECIAL (ADD CROWN) ==========
+// Make user special (ADD CROWN)
 app.post('/api/admin/make-special', authenticateAdmin, express.json(), (req, res) => {
     const { userId, badgeType } = req.body;
     
@@ -202,7 +204,6 @@ app.post('/api/admin/make-special', authenticateAdmin, express.json(), (req, res
         
         specialUsers.add(userId);
         
-        // Broadcast to all users
         io.emit('user-special-updated', {
             userId: userId,
             isSpecial: true,
@@ -211,7 +212,6 @@ app.post('/api/admin/make-special', authenticateAdmin, express.json(), (req, res
             action: 'added'
         });
         
-        // Send to specific user
         io.to(userId).emit('special-status-changed', {
             isSpecial: true,
             badgeType: user.specialBadge
@@ -231,7 +231,7 @@ app.post('/api/admin/make-special', authenticateAdmin, express.json(), (req, res
     }
 });
 
-// ========== REMOVE SPECIAL STATUS (REMOVE CROWN) ==========
+// Remove special status (REMOVE CROWN)
 app.post('/api/admin/remove-special', authenticateAdmin, express.json(), (req, res) => {
     const { userId } = req.body;
     
@@ -249,7 +249,6 @@ app.post('/api/admin/remove-special', authenticateAdmin, express.json(), (req, r
         
         specialUsers.delete(userId);
         
-        // Broadcast to all users
         io.emit('user-special-updated', {
             userId: userId,
             isSpecial: false,
@@ -258,7 +257,6 @@ app.post('/api/admin/remove-special', authenticateAdmin, express.json(), (req, r
             oldBadge: oldBadge
         });
         
-        // Send to specific user
         io.to(userId).emit('special-status-changed', {
             isSpecial: false,
             badgeType: null
@@ -277,7 +275,7 @@ app.post('/api/admin/remove-special', authenticateAdmin, express.json(), (req, r
     }
 });
 
-// ========== UPDATE BADGE TYPE ==========
+// Update badge type
 app.post('/api/admin/update-badge', authenticateAdmin, express.json(), (req, res) => {
     const { userId, badgeType } = req.body;
     
@@ -292,7 +290,6 @@ app.post('/api/admin/update-badge', authenticateAdmin, express.json(), (req, res
         user.specialBadge = badgeType;
         users.set(userId, user);
         
-        // Broadcast badge update
         io.emit('user-special-updated', {
             userId: userId,
             isSpecial: true,
@@ -321,35 +318,6 @@ app.post('/api/admin/update-badge', authenticateAdmin, express.json(), (req, res
     }
 });
 
-// Ban user
-app.post('/api/admin/ban-user', authenticateAdmin, express.json(), (req, res) => {
-    const { userId } = req.body;
-    
-    if (users.has(userId)) {
-        const user = users.get(userId);
-        
-        // Disconnect user
-        io.to(user.socketId).emit('force-disconnect', { reason: 'banned' });
-        
-        // Remove from maps
-        users.delete(userId);
-        userNames.delete(user.name);
-        if (user.deviceId) {
-            userDevices.delete(user.deviceId);
-        }
-        if (user.isSpecial) {
-            specialUsers.delete(userId);
-        }
-        
-        res.json({ 
-            success: true, 
-            message: `User ${user.name} has been banned` 
-        });
-    } else {
-        res.status(404).json({ error: 'User not found' });
-    }
-});
-
 // Serve main page
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
@@ -371,7 +339,6 @@ app.post('/upload', upload.single('file'), (req, res) => {
 io.on('connection', (socket) => {
     console.log('New user connected:', socket.id);
 
-    // ========== Get all users for search ==========
     socket.on('get-all-users', (callback) => {
         const allUsers = [];
         users.forEach((value, key) => {
@@ -392,52 +359,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // ========== Search users ==========
-    socket.on('search-users', (data) => {
-        const { query, currentUserId } = data;
-        
-        const results = [];
-        users.forEach((value, key) => {
-            if (key === currentUserId) return;
-            
-            const nameMatch = value.name.toLowerCase().includes(query.toLowerCase());
-            const idMatch = key.toLowerCase().includes(query.toLowerCase());
-            
-            if (nameMatch || idMatch) {
-                results.push({
-                    userId: key,
-                    name: value.name,
-                    profilePic: value.profilePic,
-                    isSpecial: value.isSpecial || false,
-                    specialBadge: value.specialBadge || null
-                });
-            }
-        });
-        
-        socket.emit('search-results', results);
-    });
-
-    // ========== Check username uniqueness ==========
-    socket.on('check-username', (data) => {
-        const { name, userId, deviceId } = data;
-        
-        const userDeviceId = deviceId || userId.split('_')[1] || userId;
-        
-        if (userNames.has(name)) {
-            const existingUserId = userNames.get(name);
-            const existingDeviceId = existingUserId.split('_')[1] || existingUserId;
-            
-            if (existingDeviceId === userDeviceId) {
-                socket.emit('username-check-result', false);
-            } else {
-                socket.emit('username-check-result', true);
-            }
-        } else {
-            socket.emit('username-check-result', false);
-        }
-    });
-
-    // ========== User login ==========
     socket.on('user-login', (data) => {
         const { userId, name, profilePic } = data;
         
@@ -451,7 +372,6 @@ io.on('connection', (socket) => {
             }
         }
         
-        // Check if user was previously special
         const isSpecial = specialUsers.has(userId);
         
         if (users.has(userId)) {
@@ -499,7 +419,6 @@ io.on('connection', (socket) => {
             specialBadge: isSpecial ? 'crown' : null
         });
         
-        // Deliver offline messages
         if (offlineMessages.has(userId)) {
             const messages = offlineMessages.get(userId);
             messages.forEach(msg => {
@@ -518,27 +437,9 @@ io.on('connection', (socket) => {
         console.log(`✅ User ${name} (${userId}) logged in from device ${deviceId} ${isSpecial ? '👑' : ''}`);
     });
 
-    // ========== Profile picture update ==========
-    socket.on('update-profile', (data) => {
-        const { userId, profilePic } = data;
-        
-        if (users.has(userId)) {
-            const user = users.get(userId);
-            user.profilePic = profilePic;
-            users.set(userId, user);
-            
-            socket.broadcast.emit('profile-updated', {
-                userId,
-                profilePic
-            });
-        }
-    });
-
-    // ========== Private message with offline support ==========
     socket.on('private-message', (data) => {
         const { toUserId, message, fromUserId, fromName, messageId, timestamp } = data;
         
-        // Store in message history
         messageHistory.push({
             fromUserId,
             toUserId,
@@ -556,13 +457,10 @@ io.on('connection', (socket) => {
                 timestamp,
                 messageId
             });
-            
-            console.log(`Message sent from ${fromName} to ${toUserId}`);
         } else {
             if (!offlineMessages.has(toUserId)) {
                 offlineMessages.set(toUserId, []);
             }
-            
             offlineMessages.get(toUserId).push({
                 fromUserId,
                 fromName,
@@ -571,220 +469,9 @@ io.on('connection', (socket) => {
                 messageId,
                 type: 'text'
             });
-            
-            console.log(`Message queued for offline user ${toUserId}`);
-            
-            socket.emit('message-queued', {
-                toUserId,
-                message
-            });
         }
     });
 
-    // ========== Voice message with offline support ==========
-    socket.on('voice-message', (data) => {
-        const { toUserId, audioUrl, fromUserId, fromName, duration, messageId, timestamp } = data;
-        
-        messageHistory.push({
-            fromUserId,
-            toUserId,
-            audioUrl,
-            duration,
-            timestamp,
-            type: 'voice',
-            messageId
-        });
-        
-        if (users.has(toUserId)) {
-            io.to(toUserId).emit('voice-message', {
-                fromUserId,
-                fromName,
-                audioUrl,
-                duration,
-                timestamp,
-                messageId
-            });
-        } else {
-            if (!offlineMessages.has(toUserId)) {
-                offlineMessages.set(toUserId, []);
-            }
-            
-            offlineMessages.get(toUserId).push({
-                fromUserId,
-                fromName,
-                type: 'voice',
-                audioUrl,
-                duration,
-                timestamp,
-                messageId
-            });
-        }
-    });
-
-    // ========== File message with offline support ==========
-    socket.on('file-message', (data) => {
-        const { toUserId, fileUrl, fileName, fileType, fromUserId, fromName, messageId, timestamp } = data;
-        
-        messageHistory.push({
-            fromUserId,
-            toUserId,
-            fileUrl,
-            fileName,
-            fileType,
-            timestamp,
-            type: 'file',
-            messageId
-        });
-        
-        if (users.has(toUserId)) {
-            io.to(toUserId).emit('file-message', {
-                fromUserId,
-                fromName,
-                fileUrl,
-                fileName,
-                fileType,
-                timestamp,
-                messageId
-            });
-        } else {
-            if (!offlineMessages.has(toUserId)) {
-                offlineMessages.set(toUserId, []);
-            }
-            
-            offlineMessages.get(toUserId).push({
-                fromUserId,
-                fromName,
-                type: 'file',
-                fileUrl,
-                fileName,
-                fileType,
-                timestamp,
-                messageId
-            });
-        }
-    });
-
-    // ========== Delete message handler ==========
-    socket.on('delete-message', (data) => {
-        const { messageId, toUserId, deleteType, fromUserId, timestamp } = data;
-        
-        if (deleteType === 'for-everyone') {
-            if (users.has(toUserId)) {
-                io.to(toUserId).emit('message-deleted', {
-                    messageId,
-                    deleteType,
-                    fromUserId,
-                    timestamp
-                });
-            }
-            
-            io.to(fromUserId).emit('message-deleted', {
-                messageId,
-                deleteType,
-                fromUserId,
-                timestamp
-            });
-            
-            console.log(`Message ${messageId} deleted for everyone`);
-        } else if (deleteType === 'for-me') {
-            io.to(fromUserId).emit('message-deleted', {
-                messageId,
-                deleteType,
-                fromUserId,
-                timestamp
-            });
-            
-            console.log(`Message ${messageId} deleted for user ${fromUserId}`);
-        }
-    });
-
-    // ========== Message read receipt ==========
-    socket.on('message-read', (data) => {
-        const { messageId, fromUserId, toUserId } = data;
-        io.to(fromUserId).emit('message-read', {
-            messageId,
-            fromUserId: toUserId
-        });
-    });
-
-    // ========== All messages read ==========
-    socket.on('messages-read', (data) => {
-        const { toUserId, fromUserId } = data;
-        io.to(toUserId).emit('messages-read', {
-            fromUserId
-        });
-    });
-
-    // ========== Typing indicator ==========
-    socket.on('typing', (data) => {
-        const { toUserId, fromUserId, isTyping } = data;
-        
-        if (users.has(toUserId)) {
-            io.to(toUserId).emit('typing-indicator', {
-                fromUserId,
-                isTyping
-            });
-        }
-    });
-
-    // ========== Call signaling ==========
-    socket.on('call-offer', (data) => {
-        const { toUserId, offer, callType } = data;
-        const fromUser = users.get(socket.id);
-        
-        if (users.has(toUserId)) {
-            io.to(toUserId).emit('call-offer', {
-                fromUserId: socket.id,
-                fromName: fromUser?.name,
-                offer,
-                callType
-            });
-        }
-    });
-
-    socket.on('call-answer', (data) => {
-        const { toUserId, answer } = data;
-        io.to(toUserId).emit('call-answer', { answer });
-    });
-
-    socket.on('ice-candidate', (data) => {
-        const { toUserId, candidate } = data;
-        io.to(toUserId).emit('ice-candidate', { candidate });
-    });
-
-    socket.on('call-end', (data) => {
-        const { toUserId } = data;
-        io.to(toUserId).emit('call-end');
-    });
-
-    socket.on('call-busy', (data) => {
-        const { toUserId } = data;
-        io.to(toUserId).emit('call-busy');
-    });
-
-    // ========== Last seen update ==========
-    socket.on('update-last-seen', (data) => {
-        const { userId, timestamp } = data;
-        socket.broadcast.emit('last-seen-update', {
-            userId,
-            timestamp
-        });
-    });
-
-    // ========== Status events ==========
-    socket.on('new-status', (data) => {
-        socket.broadcast.emit('new-status', data);
-    });
-
-    socket.on('status-viewed', (data) => {
-        io.to(data.ownerId).emit('status-viewed', {
-            statusId: data.statusId,
-            viewerId: data.viewerId,
-            viewerName: data.viewerName
-        });
-    });
-
-    // ========== Handle disconnection ==========
     socket.on('disconnect', () => {
         let disconnectedUser = null;
         let disconnectedUserId = null;
@@ -814,6 +501,7 @@ io.on('connection', (socket) => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`✅ HJH Chat app running on https://live-whats-chatting-production.up.railway.app`);
-    console.log(`✅ Admin panel: https://live-whats-chatting-production.up.railway.app/admin`);
+    console.log(`✅ Admin panel: https://live-whats-chatting-production.up.railway.app/harisjutttt`);
+    console.log(`❌ /admin is disabled - returns 404`);
     console.log(`✅ Admin Key: ${ADMIN_KEY}`);
 });
