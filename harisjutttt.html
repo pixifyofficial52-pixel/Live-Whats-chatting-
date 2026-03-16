@@ -18,7 +18,6 @@
             min-height: 100vh;
         }
 
-        /* Access Key Screen */
         .access-container {
             display: flex;
             justify-content: center;
@@ -132,7 +131,6 @@
             font-size: 12px;
         }
 
-        /* Main Admin Panel */
         .admin-panel {
             display: none;
         }
@@ -571,7 +569,6 @@
     </style>
 </head>
 <body>
-    <!-- Access Key Screen - KEY HIDDEN -->
     <div class="access-container" id="accessScreen">
         <div class="access-card">
             <div class="logo-container">
@@ -579,8 +576,6 @@
             </div>
             <h1>🔐 HJH Admin</h1>
             <p>Enter access key to continue</p>
-            
-            <!-- KEY DISPLAY REMOVED - SAFE -->
             
             <div class="input-group">
                 <i class="fas fa-key"></i>
@@ -598,7 +593,6 @@
         </div>
     </div>
 
-    <!-- Main Admin Panel -->
     <div class="admin-panel" id="adminPanel">
         <button class="mobile-menu-btn" id="mobileMenuBtn" onclick="toggleSidebar()">
             <i class="fas fa-bars"></i>
@@ -607,7 +601,6 @@
         <div class="close-sidebar" id="sidebarOverlay" onclick="closeSidebar()"></div>
 
         <div class="dashboard">
-            <!-- Sidebar with Logo -->
             <div class="sidebar" id="sidebar">
                 <div class="sidebar-header">
                     <div class="sidebar-logo">
@@ -642,7 +635,6 @@
                 </div>
             </div>
 
-            <!-- Main Content -->
             <div class="main-content" id="mainContent">
                 <div class="mobile-header">
                     <button class="menu-toggle" onclick="toggleSidebar()">
@@ -657,7 +649,6 @@
                     </div>
                 </div>
 
-                <!-- Dashboard Section -->
                 <div id="section-dashboard" class="section active">
                     <div class="stats-grid" id="statsGrid">
                         <div class="stat-card">
@@ -697,7 +688,6 @@
                     </div>
                 </div>
 
-                <!-- Users Section -->
                 <div id="section-users" class="section">
                     <div class="table-container">
                         <div class="table-header">
@@ -728,7 +718,6 @@
                     </div>
                 </div>
 
-                <!-- Crown Users Section -->
                 <div id="section-admins" class="section">
                     <div class="table-container">
                         <div class="table-header">
@@ -741,7 +730,6 @@
                     </div>
                 </div>
 
-                <!-- Calls Section -->
                 <div id="section-calls" class="section">
                     <div class="table-container">
                         <h2><i class="fas fa-phone"></i> Call Logs</h2>
@@ -765,7 +753,6 @@
                     </div>
                 </div>
 
-                <!-- Files Section -->
                 <div id="section-files" class="section">
                     <div class="table-container">
                         <h2><i class="fas fa-file"></i> File Management</h2>
@@ -787,7 +774,6 @@
                     </div>
                 </div>
 
-                <!-- Settings Section -->
                 <div id="section-settings" class="section">
                     <div class="table-container">
                         <h2><i class="fas fa-cog"></i> Settings</h2>
@@ -803,13 +789,10 @@
     <div id="toastContainer" class="toast-container"></div>
 
     <script>
-        // ========== SECURE ACCESS KEY (HIDDEN IN CODE) ==========
         const VALID_ACCESS_KEY = 'HJ-HACKER76768085&SBL-HACKER76768085';
         const API_KEY = 'hjchat-admin-secret-key-2024';
-        let authToken = null;
         let allUsers = [];
 
-        // ========== VERIFY ACCESS KEY ==========
         function verifyAccess() {
             const enteredKey = document.getElementById('accessKey').value.trim();
             
@@ -817,8 +800,6 @@
                 document.getElementById('accessScreen').style.display = 'none';
                 document.getElementById('adminPanel').classList.add('active');
                 showToast('✅ Access Granted!', 'success');
-                
-                authToken = 'admin-token-' + Date.now();
                 loadDashboard();
                 loadAllUsers();
                 loadCalls();
@@ -827,7 +808,6 @@
                 document.getElementById('accessError').textContent = '❌ Invalid Access Key!';
                 showToast('❌ Access Denied!', 'error');
                 document.getElementById('accessKey').value = '';
-                document.getElementById('accessKey').focus();
             }
         }
 
@@ -837,22 +817,20 @@
             }
         });
 
-        // ========== API CALLS ==========
         async function apiCall(endpoint) {
             try {
                 const response = await fetch(`/api/admin${endpoint}`, {
                     headers: { 'x-api-key': API_KEY }
                 });
-                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
                 return await response.json();
             } catch (error) {
                 console.error('API Error:', error);
-                showToast('Error loading data: ' + error.message, 'error');
+                showToast('Error loading data', 'error');
                 return null;
             }
         }
 
-        // ========== LOAD FUNCTIONS ==========
         async function loadDashboard() {
             const stats = await apiCall('/stats');
             if (stats) {
@@ -882,7 +860,6 @@
             }
         }
 
-        // ========== DISPLAY FUNCTIONS ==========
         function displayRecentUsers(users) {
             let html = '';
             users.forEach(user => {
@@ -901,7 +878,7 @@
                     </td>
                 </tr>`;
             });
-            document.getElementById('recentUsersBody').innerHTML = html;
+            document.getElementById('recentUsersBody').innerHTML = html || '<tr><td colspan="6" class="loading-row">No users</td></tr>';
         }
 
         function displayAllUsers(users) {
@@ -929,7 +906,7 @@
                     </td>
                 </tr>`;
             });
-            document.getElementById('usersBody').innerHTML = html;
+            document.getElementById('usersBody').innerHTML = html || '<tr><td colspan="7" class="loading-row">No users</td></tr>';
         }
 
         function loadAdminUsers() {
@@ -949,38 +926,31 @@
             document.getElementById('adminUsersList').innerHTML = html;
         }
 
-        // ========== USER ACTIONS ==========
         async function makeAdmin(userId) {
             if (confirm(`Give crown to this user?`)) {
-                const result = await fetch(`/api/admin/make-admin/${userId}`, {
+                await fetch(`/api/admin/make-admin/${userId}`, {
                     method: 'POST',
                     headers: { 'x-api-key': API_KEY }
                 });
-                const data = await result.json();
-                if (data.success) {
-                    showToast(`👑 User is now a crown user!`, 'success');
-                    loadAllUsers();
-                }
+                showToast(`👑 Crown granted!`, 'success');
+                loadAllUsers();
             }
         }
 
         async function removeAdmin(userId) {
             if (confirm(`Remove crown from this user?`)) {
-                const result = await fetch(`/api/admin/remove-admin/${userId}`, {
+                await fetch(`/api/admin/remove-admin/${userId}`, {
                     method: 'POST',
                     headers: { 'x-api-key': API_KEY }
                 });
-                const data = await result.json();
-                if (data.success) {
-                    showToast(`Crown removed`, 'warning');
-                    loadAllUsers();
-                }
+                showToast(`Crown removed`, 'warning');
+                loadAllUsers();
             }
         }
 
         function viewUser(userId) {
             const user = allUsers.find(u => u.userId === userId);
-            alert(`User: ${user?.name}\nID: ${userId}\nStatus: ${user?.online ? 'Online' : 'Offline'}`);
+            alert(`User: ${user?.name}\nID: ${userId}`);
         }
 
         async function blockUser(userId) {
@@ -995,18 +965,17 @@
 
         async function deleteUser(userId) {
             if (confirm(`PERMANENTLY delete this user?`)) {
-                const result = await fetch(`/api/admin/user/${userId}`, {
+                const res = await fetch(`/api/admin/user/${userId}`, {
                     method: 'DELETE',
                     headers: { 'x-api-key': API_KEY }
                 });
-                if (result.ok) {
+                if (res.ok) {
                     showToast(`User deleted`, 'error');
                     loadAllUsers();
                 }
             }
         }
 
-        // ========== LOAD CALLS AND FILES ==========
         async function loadCalls() {
             const calls = await apiCall('/calls');
             let html = '<tr><td colspan="6" class="loading-row">No calls found</td></tr>';
@@ -1038,7 +1007,6 @@
                         <td>${new Date(file.uploaded).toLocaleString()}</td>
                         <td>
                             <a href="${file.url}" target="_blank" class="action-btn view"><i class="fas fa-eye"></i></a>
-                            <button class="action-btn delete" onclick="deleteFile('${file.name}')"><i class="fas fa-trash"></i></button>
                         </td>
                     </tr>`;
                 });
@@ -1046,23 +1014,10 @@
             document.getElementById('filesBody').innerHTML = html;
         }
 
-        async function deleteFile(fileName) {
-            if (confirm(`Delete ${fileName}?`)) {
-                await fetch(`/api/admin/file/${encodeURIComponent(fileName)}`, {
-                    method: 'DELETE',
-                    headers: { 'x-api-key': API_KEY }
-                });
-                showToast('File deleted', 'success');
-                loadFiles();
-            }
-        }
-
-        // ========== SEARCH FUNCTIONS ==========
         function searchUsers() {
             const query = document.getElementById('searchUsers').value.toLowerCase();
             const filtered = allUsers.filter(u => 
-                (u.name && u.name.toLowerCase().includes(query)) || 
-                (u.userId && u.userId.toLowerCase().includes(query))
+                u.name?.toLowerCase().includes(query) || u.userId?.toLowerCase().includes(query)
             );
             displayRecentUsers(filtered.slice(0, 5));
         }
@@ -1070,13 +1025,11 @@
         function searchAllUsers() {
             const query = document.getElementById('searchAllUsers').value.toLowerCase();
             const filtered = allUsers.filter(u => 
-                (u.name && u.name.toLowerCase().includes(query)) || 
-                (u.userId && u.userId.toLowerCase().includes(query))
+                u.name?.toLowerCase().includes(query) || u.userId?.toLowerCase().includes(query)
             );
             displayAllUsers(filtered);
         }
 
-        // ========== SIDEBAR FUNCTIONS ==========
         function toggleSidebar() {
             document.getElementById('sidebar').classList.toggle('active');
             document.getElementById('sidebarOverlay').classList.toggle('active');
@@ -1087,7 +1040,6 @@
             document.getElementById('sidebarOverlay').classList.remove('active');
         }
 
-        // ========== SECTION MANAGEMENT ==========
         function showSection(section) {
             document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
             document.getElementById(`section-${section}`).classList.add('active');
@@ -1096,8 +1048,8 @@
             event.target.closest('.menu-item').classList.add('active');
             
             const titles = {
-                'dashboard': 'Dashboard', 'users': 'User Management', 'admins': 'Crown Users',
-                'calls': 'Call Logs', 'files': 'File Management', 'settings': 'Settings'
+                'dashboard': 'Dashboard', 'users': 'Users', 'admins': 'Crown Users',
+                'calls': 'Call Logs', 'files': 'Files', 'settings': 'Settings'
             };
             document.getElementById('currentSectionTitle').textContent = titles[section];
             
@@ -1107,42 +1059,22 @@
             if (section === 'files') loadFiles();
         }
 
-        // ========== LOGOUT ==========
         function logout() {
-            authToken = null;
             document.getElementById('adminPanel').classList.remove('active');
             document.getElementById('accessScreen').style.display = 'flex';
             document.getElementById('accessKey').value = '';
             closeSidebar();
         }
 
-        // ========== SETTINGS ==========
-        async function saveSettings() {
-            const settings = {
-                siteName: document.getElementById('siteName')?.value || 'HJH Chat',
-                maintenanceMode: document.getElementById('maintenanceMode')?.checked || false
-            };
-            
-            await fetch('/api/admin/settings', {
-                method: 'POST',
-                headers: { 
-                    'x-api-key': API_KEY,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(settings)
-            });
-            
+        function saveSettings() {
             showToast('Settings saved!', 'success');
         }
 
-        // ========== TOAST ==========
-        function showToast(message, type = 'info') {
-            const container = document.getElementById('toastContainer');
+        function showToast(message, type) {
             const toast = document.createElement('div');
             toast.className = `toast ${type}`;
-            let icon = type === 'success' ? 'fa-check-circle' : 'fa-info-circle';
-            toast.innerHTML = `<i class="fas ${icon}"></i><span>${message}</span>`;
-            container.appendChild(toast);
+            toast.innerHTML = `<i class="fas fa-${type === 'success' ? 'check-circle' : 'info-circle'}"></i><span>${message}</span>`;
+            document.getElementById('toastContainer').appendChild(toast);
             setTimeout(() => toast.remove(), 3000);
         }
     </script>
