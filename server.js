@@ -8,17 +8,30 @@ const fs = require('fs');
 
 const app = express();
 
-// ========== CORS configuration ==========
+// ========== IMPROVED CORS configuration ==========
 const allowedOrigins = [
     "https://live-whats-chatting-production.up.railway.app",
     "http://localhost:3000"
 ];
 
+// More permissive CORS for development, restrictive for production
 app.use(cors({
-    origin: allowedOrigins,
-    methods: ["GET", "POST"],
-    credentials: true
+    origin: function(origin, callback) {
+        // Allow requests with no origin (like mobile apps, curl, etc)
+        if (!origin) return callback(null, true);
+        
+        if (allowedOrigins.indexOf(origin) === -1 && process.env.NODE_ENV === 'production') {
+            return callback(new Error('CORS policy violation'), false);
+        }
+        return callback(null, true);
+    },
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization", "admin-key", "my-custom-header"]
 }));
+
+// Handle preflight requests
+app.options('*', cors());
 
 // ========== Force HTTPS redirect ==========
 app.use((req, res, next) => {
@@ -28,13 +41,15 @@ app.use((req, res, next) => {
     next();
 });
 
+// Important: Serve static files first
 app.use(express.static(path.join(__dirname)));
 app.use('/uploads', express.static('uploads'));
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Create uploads folder if not exists
 if (!fs.existsSync('uploads')) {
-    fs.mkdirSync('uploads');
+    fs.mkdirSync('uploads', { recursive: true });
 }
 
 // ========== Data Stores ==========
@@ -65,24 +80,39 @@ const storage = multer.diskStorage({
         cb(null, 'uploads/');
     },
     filename: (req, file, cb) => {
-        cb(null, Date.now() + '-' + file.originalname);
+        cb(null, Date.now() + '-' + file.originalname.replace(/[^a-zA-Z0-9.]/g, '_'));
     }
 });
 
-const upload = multer({ storage: storage });
+const upload = multer({ 
+    storage: storage,
+    limits: { fileSize: 50 * 1024 * 1024 } // 50MB limit
+});
 
 const server = http.createServer(app);
 
-// ========== Socket.io configuration ==========
+// ========== IMPROVED Socket.io configuration ==========
 const io = socketIo(server, {
     cors: {
-        origin: allowedOrigins,
+        origin: function(origin, callback) {
+            // Allow all origins in production temporarily to debug
+            if (process.env.NODE_ENV === 'production') {
+                return callback(null, true);
+            }
+            if (!origin || allowedOrigins.indexOf(origin) !== -1) {
+                callback(null, true);
+            } else {
+                callback(new Error('Not allowed by CORS'));
+            }
+        },
         methods: ["GET", "POST"],
         credentials: true,
-        allowedHeaders: ["my-custom-header"]
+        allowedHeaders: ["my-custom-header", "Content-Type", "Authorization"]
     },
     transports: ['websocket', 'polling'],
-    allowEIO3: true
+    allowEIO3: true,
+    pingTimeout: 60000,
+    pingInterval: 25000
 });
 
 // ========== ADMIN PANEL ROUTE ==========
@@ -90,13 +120,22 @@ app.get('/harisjutttt', (req, res) => {
     res.sendFile(path.join(__dirname, 'harisjutttt.html'));
 });
 
+// Block /admin route
 app.get('/admin', (req, res) => {
     res.status(404).send('Not Found');
 });
 
-// ========== ADMIN API ENDPOINTS ==========
+// ========== Root route to serve index.html ==========
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
 
-// Get all users for admin
+// Health check endpoint (important for Railway)
+app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// ========== ADMIN API ENDPOINTS ==========
 app.get('/api/admin/users', authenticateAdmin, (req, res) => {
     const userList = [];
     users.forEach((value, key) => {
@@ -114,7 +153,6 @@ app.get('/api/admin/users', authenticateAdmin, (req, res) => {
     res.json(userList);
 });
 
-// Get dashboard stats
 app.get('/api/admin/stats', authenticateAdmin, (req, res) => {
     let fileCount = 0;
     try {
@@ -133,7 +171,6 @@ app.get('/api/admin/stats', authenticateAdmin, (req, res) => {
     });
 });
 
-// Get all special users
 app.get('/api/admin/special-users', authenticateAdmin, (req, res) => {
     const specials = [];
     users.forEach((value, key) => {
@@ -151,7 +188,6 @@ app.get('/api/admin/special-users', authenticateAdmin, (req, res) => {
     res.json(specials);
 });
 
-// Make user special (ADD CROWN) - UPDATED WITH PERSISTENCE
 app.post('/api/admin/make-special', authenticateAdmin, express.json(), (req, res) => {
     const { userId, badgeType } = req.body;
     
@@ -163,7 +199,6 @@ app.post('/api/admin/make-special', authenticateAdmin, express.json(), (req, res
         
         specialUsers.add(userId);
         
-        // Force emit to all clients
         io.emit('user-special-updated', {
             userId: userId,
             isSpecial: true,
@@ -191,7 +226,6 @@ app.post('/api/admin/make-special', authenticateAdmin, express.json(), (req, res
     }
 });
 
-// Remove special status (REMOVE CROWN)
 app.post('/api/admin/remove-special', authenticateAdmin, express.json(), (req, res) => {
     const { userId } = req.body;
     
@@ -235,7 +269,6 @@ app.post('/api/admin/remove-special', authenticateAdmin, express.json(), (req, r
     }
 });
 
-// Update badge type
 app.post('/api/admin/update-badge', authenticateAdmin, express.json(), (req, res) => {
     const { userId, badgeType } = req.body;
     
@@ -278,27 +311,35 @@ app.post('/api/admin/update-badge', authenticateAdmin, express.json(), (req, res
     }
 });
 
-// Serve main page
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
-});
-
 // File upload endpoint
 app.post('/upload', upload.single('file'), (req, res) => {
-    const file = req.file;
-    const fileUrl = `/uploads/${file.filename}`;
-    res.json({ 
-        success: true, 
-        fileUrl: fileUrl,
-        fileName: file.originalname,
-        fileType: file.mimetype
-    });
+    try {
+        const file = req.file;
+        if (!file) {
+            return res.status(400).json({ error: 'No file uploaded' });
+        }
+        const fileUrl = `/uploads/${file.filename}`;
+        res.json({ 
+            success: true, 
+            fileUrl: fileUrl,
+            fileName: file.originalname,
+            fileType: file.mimetype,
+            size: file.size
+        });
+    } catch (error) {
+        console.error('Upload error:', error);
+        res.status(500).json({ error: 'Upload failed' });
+    }
 });
 
 // ========== SOCKET.IO EVENTS ==========
 io.on('connection', (socket) => {
-    console.log('New user connected:', socket.id);
+    console.log('🟢 New client connected:', socket.id, 'IP:', socket.handshake.address);
 
+    // Send acknowledgment
+    socket.emit('connected', { id: socket.id, message: 'Connected to server' });
+
+    // Get all users
     socket.on('get-all-users', (callback) => {
         const allUsers = [];
         users.forEach((value, key) => {
@@ -319,64 +360,36 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('search-users', (data) => {
-        const { query, currentUserId } = data;
-        
-        const results = [];
-        users.forEach((value, key) => {
-            if (key === currentUserId) return;
-            
-            const nameMatch = value.name.toLowerCase().includes(query.toLowerCase());
-            const idMatch = key.toLowerCase().includes(query.toLowerCase());
-            
-            if (nameMatch || idMatch) {
-                results.push({
-                    userId: key,
-                    name: value.name,
-                    profilePic: value.profilePic,
-                    isSpecial: value.isSpecial || false,
-                    specialBadge: value.specialBadge || null
-                });
-            }
-        });
-        
-        socket.emit('search-results', results);
-    });
-
+    // Check username
     socket.on('check-username', (data) => {
         const { name, userId, deviceId } = data;
-        
         const userDeviceId = deviceId || userId.split('_')[1] || userId;
         
         if (userNames.has(name)) {
             const existingUserId = userNames.get(name);
             const existingDeviceId = existingUserId.split('_')[1] || existingUserId;
             
-            if (existingDeviceId === userDeviceId) {
-                socket.emit('username-check-result', false);
-            } else {
-                socket.emit('username-check-result', true);
-            }
+            socket.emit('username-check-result', existingDeviceId === userDeviceId);
         } else {
             socket.emit('username-check-result', false);
         }
     });
 
+    // User login
     socket.on('user-login', (data) => {
         const { userId, name, profilePic } = data;
-        
         const deviceId = userId.split('_')[1] || userId;
         
+        // Check device
         if (userDevices.has(deviceId)) {
             const oldUserId = userDevices.get(deviceId);
             if (oldUserId !== userId) {
-                socket.emit('login-error', 'This device already has a different user. Please use another device.');
+                socket.emit('login-error', 'This device already has a different user');
                 return;
             }
         }
         
-        const isSpecial = specialUsers.has(userId);
-        
+        // Disconnect old session
         if (users.has(userId)) {
             const oldSocketId = users.get(userId).socketId;
             if (oldSocketId !== socket.id) {
@@ -385,6 +398,10 @@ io.on('connection', (socket) => {
             }
         }
         
+        // Check special status
+        const isSpecial = specialUsers.has(userId);
+        
+        // Store user
         users.set(userId, {
             socketId: socket.id,
             name: name,
@@ -396,9 +413,9 @@ io.on('connection', (socket) => {
         
         userNames.set(name, userId);
         userDevices.set(deviceId, userId);
-        
         socket.join(userId);
         
+        // Send online users
         const onlineUsers = [];
         users.forEach((value, key) => {
             if (key !== userId) {
@@ -414,6 +431,7 @@ io.on('connection', (socket) => {
         
         socket.emit('online-users', onlineUsers);
         
+        // Broadcast online status
         socket.broadcast.emit('user-online', { 
             userId, 
             name, 
@@ -422,6 +440,7 @@ io.on('connection', (socket) => {
             specialBadge: isSpecial ? 'crown' : null
         });
         
+        // Deliver offline messages
         if (offlineMessages.has(userId)) {
             const messages = offlineMessages.get(userId);
             messages.forEach(msg => {
@@ -434,12 +453,36 @@ io.on('connection', (socket) => {
                 });
             });
             offlineMessages.delete(userId);
-            console.log(`Delivered ${messages.length} offline messages to ${name}`);
+            console.log(`📨 Delivered ${messages.length} offline messages to ${name}`);
         }
         
-        console.log(`✅ User ${name} (${userId}) logged in from device ${deviceId} ${isSpecial ? '👑' : ''}`);
+        console.log(`✅ User ${name} (${userId}) logged in ${isSpecial ? '👑' : ''}`);
     });
 
+    // Search users
+    socket.on('search-users', (data) => {
+        const { query, currentUserId } = data;
+        const results = [];
+        
+        users.forEach((value, key) => {
+            if (key === currentUserId) return;
+            
+            if (value.name.toLowerCase().includes(query.toLowerCase()) || 
+                key.toLowerCase().includes(query.toLowerCase())) {
+                results.push({
+                    userId: key,
+                    name: value.name,
+                    profilePic: value.profilePic,
+                    isSpecial: value.isSpecial || false,
+                    specialBadge: value.specialBadge || null
+                });
+            }
+        });
+        
+        socket.emit('search-results', results);
+    });
+
+    // Profile update
     socket.on('update-profile', (data) => {
         const { userId, profilePic } = data;
         
@@ -448,13 +491,11 @@ io.on('connection', (socket) => {
             user.profilePic = profilePic;
             users.set(userId, user);
             
-            socket.broadcast.emit('profile-updated', {
-                userId,
-                profilePic
-            });
+            socket.broadcast.emit('profile-updated', { userId, profilePic });
         }
     });
 
+    // Private message
     socket.on('private-message', (data) => {
         const { toUserId, message, fromUserId, fromName, messageId, timestamp, fromUserSpecial } = data;
         
@@ -476,13 +517,11 @@ io.on('connection', (socket) => {
                 messageId,
                 fromUserSpecial
             });
-            
-            console.log(`Message sent from ${fromName} to ${toUserId}`);
+            console.log(`💬 Message from ${fromName} to ${toUserId}`);
         } else {
             if (!offlineMessages.has(toUserId)) {
                 offlineMessages.set(toUserId, []);
             }
-            
             offlineMessages.get(toUserId).push({
                 fromUserId,
                 fromName,
@@ -492,16 +531,11 @@ io.on('connection', (socket) => {
                 type: 'text',
                 fromUserSpecial
             });
-            
-            console.log(`Message queued for offline user ${toUserId}`);
-            
-            socket.emit('message-queued', {
-                toUserId,
-                message
-            });
+            socket.emit('message-queued', { toUserId, message });
         }
     });
 
+    // Voice message
     socket.on('voice-message', (data) => {
         const { toUserId, audioUrl, fromUserId, fromName, duration, messageId, timestamp, fromUserSpecial } = data;
         
@@ -529,7 +563,6 @@ io.on('connection', (socket) => {
             if (!offlineMessages.has(toUserId)) {
                 offlineMessages.set(toUserId, []);
             }
-            
             offlineMessages.get(toUserId).push({
                 fromUserId,
                 fromName,
@@ -543,6 +576,7 @@ io.on('connection', (socket) => {
         }
     });
 
+    // File message
     socket.on('file-message', (data) => {
         const { toUserId, fileUrl, fileName, fileType, fromUserId, fromName, messageId, timestamp, fromUserSpecial } = data;
         
@@ -572,7 +606,6 @@ io.on('connection', (socket) => {
             if (!offlineMessages.has(toUserId)) {
                 offlineMessages.set(toUserId, []);
             }
-            
             offlineMessages.get(toUserId).push({
                 fromUserId,
                 fromName,
@@ -587,76 +620,50 @@ io.on('connection', (socket) => {
         }
     });
 
+    // Delete message
     socket.on('delete-message', (data) => {
         const { messageId, toUserId, deleteType, fromUserId, timestamp } = data;
         
         if (deleteType === 'for-everyone') {
             if (users.has(toUserId)) {
-                io.to(toUserId).emit('message-deleted', {
-                    messageId,
-                    deleteType,
-                    fromUserId,
-                    timestamp
-                });
+                io.to(toUserId).emit('message-deleted', { messageId, deleteType, fromUserId, timestamp });
             }
-            
-            io.to(fromUserId).emit('message-deleted', {
-                messageId,
-                deleteType,
-                fromUserId,
-                timestamp
-            });
-            
-            console.log(`Message ${messageId} deleted for everyone`);
+            io.to(fromUserId).emit('message-deleted', { messageId, deleteType, fromUserId, timestamp });
         } else if (deleteType === 'for-me') {
-            io.to(fromUserId).emit('message-deleted', {
-                messageId,
-                deleteType,
-                fromUserId,
-                timestamp
-            });
-            
-            console.log(`Message ${messageId} deleted for user ${fromUserId}`);
+            io.to(fromUserId).emit('message-deleted', { messageId, deleteType, fromUserId, timestamp });
         }
     });
 
+    // Message read
     socket.on('message-read', (data) => {
         const { messageId, fromUserId, toUserId } = data;
-        io.to(fromUserId).emit('message-read', {
-            messageId,
-            fromUserId: toUserId
-        });
+        io.to(fromUserId).emit('message-read', { messageId, fromUserId: toUserId });
     });
 
+    // Messages read
     socket.on('messages-read', (data) => {
         const { toUserId, fromUserId } = data;
-        io.to(toUserId).emit('messages-read', {
-            fromUserId
-        });
+        io.to(toUserId).emit('messages-read', { fromUserId });
     });
 
+    // Typing
     socket.on('typing', (data) => {
         const { toUserId, fromUserId, isTyping } = data;
-        
         if (users.has(toUserId)) {
-            io.to(toUserId).emit('typing-indicator', {
-                fromUserId,
-                isTyping
-            });
+            io.to(toUserId).emit('typing-indicator', { fromUserId, isTyping });
         }
     });
 
+    // Call signaling
     socket.on('call-offer', (data) => {
         const { toUserId, offer, callType, fromUserId, fromName } = data;
-        const fromUser = users.get(fromUserId);
-        
         if (users.has(toUserId)) {
             io.to(toUserId).emit('call-offer', {
                 fromUserId,
                 fromName,
                 offer,
                 callType,
-                fromUserSpecial: fromUser?.isSpecial || false
+                fromUserSpecial: users.get(fromUserId)?.isSpecial || false
             });
         }
     });
@@ -681,26 +688,13 @@ io.on('connection', (socket) => {
         io.to(toUserId).emit('call-busy');
     });
 
+    // Last seen
     socket.on('update-last-seen', (data) => {
         const { userId, timestamp } = data;
-        socket.broadcast.emit('last-seen-update', {
-            userId,
-            timestamp
-        });
+        socket.broadcast.emit('last-seen-update', { userId, timestamp });
     });
 
-    socket.on('new-status', (data) => {
-        socket.broadcast.emit('new-status', data);
-    });
-
-    socket.on('status-viewed', (data) => {
-        io.to(data.ownerId).emit('status-viewed', {
-            statusId: data.statusId,
-            viewerId: data.viewerId,
-            viewerName: data.viewerName
-        });
-    });
-
+    // Disconnect
     socket.on('disconnect', () => {
         let disconnectedUser = null;
         let disconnectedUserId = null;
@@ -722,15 +716,22 @@ io.on('connection', (socket) => {
                 wasSpecial: disconnectedUser.isSpecial || false
             });
             
-            console.log(`User ${disconnectedUser.name} disconnected`);
+            console.log(`🔴 User ${disconnectedUser.name} disconnected`);
         }
     });
 });
 
+// Error handling middleware
+app.use((err, req, res, next) => {
+    console.error('Server error:', err.stack);
+    res.status(500).json({ error: 'Something went wrong!' });
+});
+
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`✅ HJH Chat app running on https://live-whats-chatting-production.up.railway.app`);
-    console.log(`✅ Admin panel: https://live-whats-chatting-production.up.railway.app/harisjutttt`);
-    console.log(`❌ /admin is disabled - returns 404`);
-    console.log(`✅ Admin Key: ${ADMIN_KEY}`);
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`🌐 Main app: https://live-whats-chatting-production.up.railway.app`);
+    console.log(`👑 Admin panel: https://live-whats-chatting-production.up.railway.app/harisjutttt`);
+    console.log(`🔑 Admin key: ${ADMIN_KEY}`);
+    console.log(`📡 Environment: ${process.env.NODE_ENV || 'development'}`);
 });
