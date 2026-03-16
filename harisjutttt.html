@@ -45,7 +45,6 @@
             100% { box-shadow: 0 0 20px #ffd700; }
         }
 
-        /* Logo Container */
         .logo-container {
             width: 120px;
             height: 120px;
@@ -70,21 +69,8 @@
 
         .access-card p {
             color: #666;
-            margin-bottom: 25px;
+            margin-bottom: 30px;
             font-size: 14px;
-        }
-
-        .access-key-display {
-            background: #1a1a2e;
-            color: #ffd700;
-            padding: 15px;
-            border-radius: 15px;
-            font-family: monospace;
-            font-size: 16px;
-            letter-spacing: 1px;
-            margin-bottom: 20px;
-            word-break: break-all;
-            border: 2px solid #ffd700;
         }
 
         .input-group {
@@ -146,7 +132,7 @@
             font-size: 12px;
         }
 
-        /* Main Admin Panel (Hidden by default) */
+        /* Main Admin Panel */
         .admin-panel {
             display: none;
         }
@@ -155,7 +141,6 @@
             display: block;
         }
 
-        /* Mobile Menu Button */
         .mobile-menu-btn {
             display: none;
             position: fixed;
@@ -175,13 +160,11 @@
             color: #667eea;
         }
 
-        /* Dashboard */
         .dashboard {
             min-height: 100vh;
             background: #f5f5f5;
         }
 
-        /* Sidebar */
         .sidebar {
             position: fixed;
             left: -280px;
@@ -288,13 +271,11 @@
             display: block;
         }
 
-        /* Main Content */
         .main-content {
             padding: 20px;
             transition: all 0.3s;
         }
 
-        /* Header with Menu Button */
         .mobile-header {
             display: flex;
             align-items: center;
@@ -348,7 +329,6 @@
             color: #666;
         }
 
-        /* Sections */
         .section {
             display: none;
         }
@@ -363,7 +343,6 @@
             to { opacity: 1; transform: translateY(0); }
         }
 
-        /* Stats Cards */
         .stats-grid {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
@@ -397,7 +376,6 @@
             color: #333;
         }
 
-        /* Tables */
         .table-container {
             background: white;
             border-radius: 15px;
@@ -531,7 +509,6 @@
             transform: scale(1.1);
         }
 
-        /* Toast */
         .toast-container {
             position: fixed;
             top: 20px;
@@ -594,7 +571,7 @@
     </style>
 </head>
 <body>
-    <!-- Access Key Screen with Logo -->
+    <!-- Access Key Screen - KEY HIDDEN -->
     <div class="access-container" id="accessScreen">
         <div class="access-card">
             <div class="logo-container">
@@ -603,9 +580,7 @@
             <h1>🔐 HJH Admin</h1>
             <p>Enter access key to continue</p>
             
-            <div class="access-key-display">
-                <i class="fas fa-key"></i> HJ-HACKER76768085&SBL-HACKER76768085
-            </div>
+            <!-- KEY DISPLAY REMOVED - SAFE -->
             
             <div class="input-group">
                 <i class="fas fa-key"></i>
@@ -623,17 +598,14 @@
         </div>
     </div>
 
-    <!-- Main Admin Panel with Logo -->
+    <!-- Main Admin Panel -->
     <div class="admin-panel" id="adminPanel">
-        <!-- Mobile Menu Button -->
         <button class="mobile-menu-btn" id="mobileMenuBtn" onclick="toggleSidebar()">
             <i class="fas fa-bars"></i>
         </button>
 
-        <!-- Sidebar Overlay -->
         <div class="close-sidebar" id="sidebarOverlay" onclick="closeSidebar()"></div>
 
-        <!-- Dashboard -->
         <div class="dashboard">
             <!-- Sidebar with Logo -->
             <div class="sidebar" id="sidebar">
@@ -670,9 +642,8 @@
                 </div>
             </div>
 
-            <!-- Main Content with Logo -->
+            <!-- Main Content -->
             <div class="main-content" id="mainContent">
-                <!-- Mobile Header with Logo -->
                 <div class="mobile-header">
                     <button class="menu-toggle" onclick="toggleSidebar()">
                         <i class="fas fa-bars"></i>
@@ -686,7 +657,6 @@
                     </div>
                 </div>
 
-                <!-- Rest of the sections remain the same -->
                 <!-- Dashboard Section -->
                 <div id="section-dashboard" class="section active">
                     <div class="stats-grid" id="statsGrid">
@@ -830,11 +800,10 @@
         </div>
     </div>
 
-    <!-- Toast Container -->
     <div id="toastContainer" class="toast-container"></div>
 
     <script>
-        // ========== CONFIGURATION ==========
+        // ========== SECURE ACCESS KEY (HIDDEN IN CODE) ==========
         const VALID_ACCESS_KEY = 'HJ-HACKER76768085&SBL-HACKER76768085';
         const API_KEY = 'hjchat-admin-secret-key-2024';
         let authToken = null;
@@ -847,12 +816,9 @@
             if (enteredKey === VALID_ACCESS_KEY) {
                 document.getElementById('accessScreen').style.display = 'none';
                 document.getElementById('adminPanel').classList.add('active');
-                showToast('✅ Access Granted! Loading real data...', 'success');
+                showToast('✅ Access Granted!', 'success');
                 
-                // Auto-login with token
                 authToken = 'admin-token-' + Date.now();
-                
-                // Load real data from server
                 loadDashboard();
                 loadAllUsers();
                 loadCalls();
@@ -865,7 +831,6 @@
             }
         }
 
-        // Enter key press
         document.getElementById('accessKey').addEventListener('keypress', function(e) {
             if (e.key === 'Enter') {
                 verifyAccess();
@@ -876,15 +841,9 @@
         async function apiCall(endpoint) {
             try {
                 const response = await fetch(`/api/admin${endpoint}`, {
-                    headers: {
-                        'x-api-key': API_KEY
-                    }
+                    headers: { 'x-api-key': API_KEY }
                 });
-                
-                if (!response.ok) {
-                    throw new Error(`HTTP error! status: ${response.status}`);
-                }
-                
+                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
                 return await response.json();
             } catch (error) {
                 console.error('API Error:', error);
@@ -893,9 +852,8 @@
             }
         }
 
-        // ========== LOAD DASHBOARD ==========
+        // ========== LOAD FUNCTIONS ==========
         async function loadDashboard() {
-            // Load stats
             const stats = await apiCall('/stats');
             if (stats) {
                 document.getElementById('totalUsers').textContent = stats.totalUsers || 0;
@@ -906,7 +864,6 @@
                 document.getElementById('totalFiles').textContent = stats.totalFiles || 0;
             }
 
-            // Load users for recent list
             const users = await apiCall('/users');
             if (users) {
                 allUsers = users;
@@ -916,7 +873,6 @@
             }
         }
 
-        // ========== LOAD ALL USERS ==========
         async function loadAllUsers() {
             const users = await apiCall('/users');
             if (users) {
@@ -1029,7 +985,7 @@
 
         async function blockUser(userId) {
             if (confirm(`Block this user?`)) {
-                const result = await fetch(`/api/admin/block/${userId}`, {
+                await fetch(`/api/admin/block/${userId}`, {
                     method: 'POST',
                     headers: { 'x-api-key': API_KEY }
                 });
@@ -1053,8 +1009,9 @@
         // ========== LOAD CALLS AND FILES ==========
         async function loadCalls() {
             const calls = await apiCall('/calls');
-            let html = '';
+            let html = '<tr><td colspan="6" class="loading-row">No calls found</td></tr>';
             if (calls && calls.length > 0) {
+                html = '';
                 calls.forEach(call => {
                     html += `<tr>
                         <td>${call.caller}</td>
@@ -1065,16 +1022,15 @@
                         <td>${new Date(call.timestamp).toLocaleString()}</td>
                     </tr>`;
                 });
-            } else {
-                html = '<tr><td colspan="6" class="loading-row">No calls found</td></tr>';
             }
             document.getElementById('callsBody').innerHTML = html;
         }
 
         async function loadFiles() {
             const files = await apiCall('/files');
-            let html = '';
+            let html = '<tr><td colspan="4" class="loading-row">No files found</td></tr>';
             if (files && files.length > 0) {
+                html = '';
                 files.forEach(file => {
                     html += `<tr>
                         <td>${file.name}</td>
@@ -1086,8 +1042,6 @@
                         </td>
                     </tr>`;
                 });
-            } else {
-                html = '<tr><td colspan="4" class="loading-row">No files found</td></tr>';
             }
             document.getElementById('filesBody').innerHTML = html;
         }
@@ -1147,7 +1101,6 @@
             };
             document.getElementById('currentSectionTitle').textContent = titles[section];
             
-            // Load section data
             if (section === 'users') loadAllUsers();
             if (section === 'admins') loadAdminUsers();
             if (section === 'calls') loadCalls();
